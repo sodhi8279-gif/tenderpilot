@@ -1,0 +1,20 @@
+# UNTESTED here (Docker not installed on the build machine). PostgreSQL + TenderPilot with in-process worker.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: tenderpilot
+      POSTGRES_USER: tenderpilot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes: [pgdata:/var/lib/postgresql/data]
+  app:
+    build: .
+    depends_on: [db]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://tenderpilot:${POSTGRES_PASSWORD}@db:5432/tenderpilot
+    ports: ["127.0.0.1:8000:8000"]
+    volumes: [files:/data]
+volumes:
+  pgdata:
+  files:

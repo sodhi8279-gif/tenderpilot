@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+frontend/dist/
+data/
+backend/data/
+*.db
+*.sqlite
+.env
+# real tender/company documents never go to git
+uploads/
+real_documents/
+backend/fixtures/generated/
+.playwright-mcp/
+backups/
