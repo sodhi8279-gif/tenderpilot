@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { t as tr } from "../../i18n";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api";
@@ -149,6 +149,14 @@ function BidderAndCutoff({ t, reload }: { t: Tender; reload: () => void }) {
   const [f, setF] = useState({ bidder_type: t.bidder_type, bidder: String((t.bidder_type === "jv" ? t.jv_id : t.bidder_entity_id) || ""),
     cutoff: t.qualification_cutoff || "", source: t.qualification_cutoff_source || "" });
   const act = useAction();
+  // Companies and JVs are added in the vault, often in another tab: refresh the lists when the user comes back.
+  useEffect(() => {
+    const again = () => { if (document.visibilityState === "visible") { ents.reload(); jvs.reload(); } };
+    window.addEventListener("focus", again);
+    document.addEventListener("visibilitychange", again);
+    return () => { window.removeEventListener("focus", again); document.removeEventListener("visibilitychange", again); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const options = f.bidder_type === "jv" ? jvs.data?.map((j) => [j.id, j.name] as const) : ents.data?.map((x) => [x.id, x.legal_name] as const);
   const save = () => act.run(() => api(`/tenders/${t.id}`, { method: "PATCH", json: {
     row_version: t.row_version, bidder_type: f.bidder_type,
     bidder_entity_id: f.bidder_type === "entity" && f.bidder ? Number(f.bidder) : null,
@@ -156,15 +164,22 @@ function BidderAndCutoff({ t, reload }: { t: Tender; reload: () => void }) {
     ...(f.cutoff ? { qualification_cutoff: f.cutoff, qualification_cutoff_source: f.source } : {}) } }), reload);
   return (
     <Panel title="Bidder and qualification date">
-      <ErrorBox error={act.error} />
+      <ErrorBox error={act.error || ents.error || jvs.error} onRetry={ents.error || jvs.error ? () => { ents.reload(); jvs.reload(); } : undefined} />
       <div className="space-y-3 text-sm">
         <select aria-label="Bidder type" className={inputCls} value={f.bidder_type} onChange={(e) => setF({ ...f, bidder_type: e.target.value, bidder: "" })}>
           <option value="entity">Single legal entity</option><option value="jv">Joint venture</option>
         </select>
         <select aria-label="Bidder" className={inputCls} value={f.bidder} onChange={(e) => setF({ ...f, bidder: e.target.value })}>
           <option value="">Not chosen</option>
-          {(f.bidder_type === "jv" ? jvs.data?.map((j) => [j.id, j.name]) : ents.data?.map((x) => [x.id, x.legal_name]))?.map(([id, n]) => <option key={id} value={id}>{n}</option>)}
+          {options?.map(([id, n]) => <option key={id} value={id}>{n}</option>)}
         </select>
+        {options && options.length === 0 && (
+          <p className="rounded bg-[#fbeedb] px-2 py-1.5 text-[#6b3e00]">
+            {f.bidder_type === "jv"
+              ? <>No joint venture yet. Add the partner companies, then the JV, in the <Link className="font-medium underline" to="/vault">Company vault</Link> (Joint ventures tab).</>
+              : <>No company yet. Add your company in the <Link className="font-medium underline" to="/vault">Company vault</Link> (Legal entities tab); it then appears here.</>}
+          </p>
+        )}
         <label className="block"><span className="mb-1 block font-medium">Qualification cutoff date</span>
           <input type="date" className={inputCls} value={f.cutoff} onChange={(e) => setF({ ...f, cutoff: e.target.value })} /></label>
         <input aria-label="Clause defining the cutoff" placeholder="Clause that defines it, e.g. 10.5" className={inputCls}
