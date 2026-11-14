@@ -13,7 +13,7 @@ from ..audit import audit
 from ..deps import Ctx, get_ctx
 from ..models import (DOC_CLASSES, JV, WORKFLOW_STEPS, ChecklistTask, ExtractionJob, LegalEntity, Requirement,
                       RequirementVersion, SourceDocument, SourcePage, Tender, TenderVersion)
-from ..services import jobs
+from ..services import jobs, precedence
 from ..services.checklist import generate_checklist
 from ..services.dates import parse_date
 from ..services.eligibility import blockers, propose_rules
@@ -266,6 +266,87 @@ def classify(tender_id: int, doc_id: int, body: ClassifyIn, ctx: Ctx = Depends(g
     return to_dict(d, {"storage_key", "converted_storage_key"})
 
 
+# ---------------------------------------------------------------- order of precedence
+class RankIn(BaseModel):
+    precedence_rank: int | None = Field(default=None, ge=1, le=50)
+
+
+@router.get("/{tender_id}/precedence")
+def get_precedence(tender_id: int, ctx: Ctx = Depends(get_ctx)):
+    ctx.require("tender.read")
+    t = ctx.tender(tender_id)
+    out = precedence.suggest_ranks(ctx.db, t)
+    conflicts = [r for r in ctx.db.scalars(select(Requirement).where(Requirement.tender_id == t.id, Requirement.has_conflict))]
+    out["conflicts"] = [{"requirement_id": r.id, "title": r.title, **(precedence.governing(ctx.db, r) or {"status": "not_precedence"})}
+                        for r in conflicts]
+    return out
+
+
+@router.put("/{tender_id}/documents/{doc_id}/precedence")
+def set_precedence_rank(tender_id: int, doc_id: int, body: RankIn, ctx: Ctx = Depends(get_ctx)):
+    """Record a document's precedence rank (does not re-read the document or change any requirement)."""
+    ctx.require("requirements.review")
+    t = ctx.tender(tender_id)
+    d = ctx.db.get(SourceDocument, doc_id)
+    if d is None or d.tender_id != t.id:
+        raise HTTPException(404, "Document not found")
+    old = d.precedence_rank
+    d.precedence_rank = body.precedence_rank
+    audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="document.precedence_rank", subject_type="source_document",
+          subject_id=d.id, tender_id=t.id, old=old, new=body.precedence_rank)
+    ctx.db.commit()
+    return {"id": d.id, "precedence_rank": d.precedence_rank}
+
+
+def _apply_precedence(ctx: Ctx, t, r: Requirement) -> None:
+    try:
+        v = precedence.apply(ctx.db, r, ctx.user.id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="requirement.precedence_applied", subject_type="requirement",
+          subject_id=r.id, tender_id=t.id, version=v.version_no)
+
+
+def _after_review(ctx: Ctx, t, req_ids: list[int], reason: str) -> None:
+    ctx.db.flush()
+    invalidate_dependents(ctx.db, t, req_ids, reason=reason)
+    propose_rules(ctx.db, t)
+    generate_checklist(ctx.db, t)
+    sync_tender_facts(ctx.db, t)
+
+
+@router.post("/{tender_id}/requirements/{req_id}/apply-precedence")
+def apply_precedence(tender_id: int, req_id: int, ctx: Ctx = Depends(get_ctx)):
+    """Reviewer accepts the order-of-precedence suggestion for one conflicting requirement."""
+    ctx.require("requirements.review")
+    t = ctx.tender(tender_id)
+    r = ctx.db.get(Requirement, req_id)
+    if r is None or r.tender_id != t.id:
+        raise HTTPException(404, "Requirement not found")
+    _apply_precedence(ctx, t, r)
+    _after_review(ctx, t, [r.id], f"Requirement '{r.title}' resolved by order of precedence")
+    ctx.db.commit()
+    ctx.db.refresh(r)
+    return req_out(ctx, r)
+
+
+@router.post("/{tender_id}/precedence/apply-all")
+def apply_precedence_all(tender_id: int, ctx: Ctx = Depends(get_ctx)):
+    """Reviewer accepts every clear precedence suggestion in this tender (ties and unranked documents are left alone)."""
+    ctx.require("requirements.review")
+    t = ctx.tender(tender_id)
+    done = []
+    for r in list(ctx.db.scalars(select(Requirement).where(Requirement.tender_id == t.id, Requirement.has_conflict))):
+        g = precedence.governing(ctx.db, r)
+        if g and g["status"] == "suggested":
+            _apply_precedence(ctx, t, r)
+            done.append(r.id)
+    if done:
+        _after_review(ctx, t, done, "Conflicts resolved by order of precedence")
+    ctx.db.commit()
+    return {"applied": len(done), "requirement_ids": done}
+
+
 class PasswordIn(BaseModel):
     password: str = Field(min_length=1, max_length=200)
 
@@ -430,7 +511,7 @@ def req_out(ctx: Ctx, r: Requirement) -> dict:
             docs[a.document_id] = d.filename if d else None
         versions.append({**to_dict(v), "anchor": ({**to_dict(a), "filename": docs.get(a.document_id)} if a else None)})
     return {**to_dict(r), "current": next((x for x in versions if x["is_current"]), None), "versions": versions,
-            "low_confidence": bool(cur and cur.confidence < 0.8)}
+            "low_confidence": bool(cur and cur.confidence < 0.8), "precedence": precedence.governing(ctx.db, r)}
 
 
 @router.get("/{tender_id}/requirements")
