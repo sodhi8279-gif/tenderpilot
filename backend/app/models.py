@@ -337,6 +337,23 @@ class EvidenceRecord(Base, TimestampMixin):
     reviewer_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
 
 
+class EvidenceDerivative(Base, TimestampMixin):
+    """A cleaned copy of a vault scan (rotated / cropped / straightened page). Added in update 0004.
+    The evidence record, its file and its hash are never changed; this is a separate file a user may download
+    or, if they choose, upload as a new version through the normal vault versioning."""
+    __tablename__ = "evidence_derivatives"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    evidence_id: Mapped[int] = mapped_column(ForeignKey("evidence_records.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(30), default="image_edit")
+    page_index: Mapped[int] = mapped_column(Integer, default=0)
+    params: Mapped[dict] = mapped_column(JSON, default=dict)
+    storage_key: Mapped[str] = mapped_column(String(300))
+    sha256: Mapped[str] = mapped_column(String(64))
+    source_sha256: Mapped[str | None] = mapped_column(String(64))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+
 class EvidenceLink(Base, TimestampMixin):
     __tablename__ = "evidence_links"
     id: Mapped[int] = mapped_column(primary_key=True)

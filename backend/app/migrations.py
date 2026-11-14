@@ -45,8 +45,13 @@ def _m0003_similarity_links(conn) -> None:
             conn.execute(text(f"ALTER TABLE evidence_links ADD COLUMN {name} {ddl}"))
 
 
+def _m0004_evidence_derivatives(conn) -> None:
+    """New table for cleaned copies of vault scans. Additive: creates only tables that do not exist yet."""
+    Base.metadata.create_all(bind=conn, tables=[models.EvidenceDerivative.__table__])
+
+
 MIGRATIONS = [("0001_baseline", _m0001_baseline), ("0002_integrations", _m0002_integrations),
-              ("0003_similarity_links", _m0003_similarity_links)]
+              ("0003_similarity_links", _m0003_similarity_links), ("0004_evidence_derivatives", _m0004_evidence_derivatives)]
 
 
 def pending_migrations() -> list[str]:

@@ -65,3 +65,11 @@ export const inr = (v: string | number | null | undefined, places = 2) => {
   const frac = places ? "." + (f + "00").slice(0, places) : "";
   return `${neg ? "-" : ""}₹${whole}${frac}`;
 };
+
+/** POST JSON and receive a binary (e.g. an image preview) as a blob URL, with the response headers. */
+export async function postBlob(path: string, json: unknown): Promise<{ url: string; headers: Headers }> {
+  const res = await fetch(`/api/v1${path}`, { method: "POST", headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify(json) });
+  if (!res.ok) throw new ApiError(res.status, detail(await res.json().catch(() => ({}))));
+  return { url: URL.createObjectURL(await res.blob()), headers: res.headers };
+}
