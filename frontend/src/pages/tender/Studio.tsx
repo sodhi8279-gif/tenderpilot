@@ -9,7 +9,7 @@ type Gen = { id: number; template_id: number; name: string; revision: number; st
   stale: boolean; envelope: string; signing_required: boolean; certification_required: string | null; signed_sha256: string | null;
   signed_has_digital_signature: boolean; created_at: string; docx_key: string | null };
 const SOURCE: Record<string, (n: number) => string> = { builtin: () => "Built-in", docx: (n) => `Tender form (DOCX), ${n} fields`,
-  pdf_form: (n) => `Fillable PDF form, ${n} fields`, pdf_overlay: (n) => `Scanned / flat PDF form, ${n} boxes` };
+  pdf_form: (n) => `Fillable PDF form, ${n} field${n === 1 ? "" : "s"}`, pdf_overlay: (n) => `Scanned / flat PDF form, ${n} box${n === 1 ? "" : "es"}` };
 
 export default function Studio({ tid }: { tid: number }) {
   const [tab, setTab] = useState("forms");

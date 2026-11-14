@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, download, postBlob } from "../api";
 import { useMe } from "../App";
 import { Button, ErrorBox, fmtDate, inputCls, Loading, Notice, Panel, useAction, useLoad } from "../ui";
@@ -19,6 +19,8 @@ export default function ScanEditor({ evidenceId, title, onClose }: { evidenceId:
   const [img, setImg] = useState<string | null>(null);
   const [angle, setAngle] = useState<string | null>(null);
   const act = useAction();
+  const top = useRef<HTMLDivElement>(null);
+  useEffect(() => { top.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }, []); // opens below a long list
   const body = () => {
     const c = [crop.left / 100, crop.top / 100, crop.right / 100, crop.bottom / 100];
     const full = c[0] === 0 && c[1] === 0 && c[2] === 1 && c[3] === 1;
@@ -40,6 +42,7 @@ export default function ScanEditor({ evidenceId, title, onClose }: { evidenceId:
   );
 
   return (
+    <div ref={top} className="scroll-mt-4">
     <Panel title={`Clean up scan: ${title}`} actions={<Button kind="ghost" onClick={onClose}>Close</Button>}>
       <ErrorBox error={info.error || act.error} />
       {!info.data ? <Loading /> : (
@@ -94,5 +97,6 @@ export default function ScanEditor({ evidenceId, title, onClose }: { evidenceId:
         </div>
       )}
     </Panel>
+    </div>
   );
 }
