@@ -2,16 +2,18 @@ import { useState } from "react";
 import { api, blobUrl } from "../api";
 import { useMe } from "../App";
 import ScanEditor from "./ScanEditor";
+import { t } from "../i18n";
+import FirmLibrary from "./Firms";
 import { Button, Empty, ErrorBox, Field, fmtDay, inputCls, Loading, Notice, Panel, Status, Tabs, useAction, useLoad } from "../ui";
 
-type Entity = { id: number; legal_name: string; entity_type: string; registered_address: string; pan: string | null; gstin: string | null;
-  signatory_name: string | null; signatory_designation: string | null };
-type Evid = { id: number; legal_entity_id: number; entity_name: string; category: string; title: string; issuer: string | null; subject_name_on_document: string | null;
+export type Entity = { id: number; legal_name: string; entity_type: string; registered_address: string; pan: string | null; gstin: string | null;
+  signatory_name: string | null; signatory_designation: string | null; profile?: Record<string, string> };
+export type Evid = { id: number; legal_entity_id: number; entity_name: string; category: string; title: string; issuer: string | null; subject_name_on_document: string | null;
   issue_date: string | null; expiry_date: string | null; fields: Record<string, string>; verification_state: string; issues: string[]; version: number; sha256: string | null;
   filename: string | null; name_mismatch: boolean };
 
 // Suggested structured fields per category (used by the eligibility engine).
-const FIELDS: Record<string, string[]> = {
+export const FIELDS: Record<string, string[]> = {
   turnover_certificate: ["fy", "turnover"], audited_accounts: ["fy", "turnover", "net_worth"], net_worth: ["net_worth", "as_of"],
   solvency: ["amount"], existing_commitments: ["amount"],
   completion_certificate: ["work_name", "scope_of_work", "dimensions", "employer", "executed_value", "completion_date", "status", "completed_pct", "is_similar"],
@@ -29,47 +31,55 @@ const HINT: Record<string, string> = { qualification: "e.g. B.E. Civil, Diploma 
   current_designation: "e.g. Site Engineer, Safety Officer", is_similar: "per tender: confirm in the eligibility matrix" };
 
 export default function Vault() {
-  const [tab, setTab] = useState("evidence");
+  const [tab, setTab] = useState("firms");
   return (
     <div className="mx-auto max-w-6xl">
-      <h1 className="text-2xl font-semibold tracking-tight">Company vault</h1>
-      <p className="mb-4 text-sm text-muted">Verified records reused across tenders. Originals are stored unchanged with their hash; replacements keep the history.</p>
-      <Tabs tabs={[["evidence", "Documents and credentials"], ["entities", "Legal entities"], ["jvs", "Joint ventures"]]} value={tab} onChange={setTab} />
-      <div className="mt-4">{tab === "evidence" ? <Evidence /> : tab === "entities" ? <Entities /> : <JVs />}</div>
+      <h1 className="text-2xl font-semibold tracking-tight">{t("Client firms")}</h1>
+      <p className="mb-4 text-sm text-muted">{t("The firms you submit tenders for, with their documents and credentials. Choose a firm, or several for a JV, on any tender: nothing is typed again.")}</p>
+      <Tabs tabs={[["firms", "Client firms"], ["evidence", "All documents"], ["jvs", "Saved JVs"]]} value={tab} onChange={setTab} />
+      <div className="mt-4">{tab === "firms" ? <FirmLibrary /> : tab === "evidence" ? <Evidence /> : <JVs />}</div>
     </div>
   );
 }
 
-function Evidence() {
+/** Documents and credentials: all firms, or one firm limited to a group of categories (firm page tabs). */
+export function Evidence({ entityId, categories, onChange }: { entityId?: number; categories?: string[]; onChange?: () => void } = {}) {
   const { can } = useMe();
-  const ents = useLoad<Entity[]>(() => api("/entities"));
-  const cats = useLoad<string[]>(() => api("/evidence/categories"));
-  const [filter, setFilter] = useState({ entity: "", category: "" });
-  const ev = useLoad<Evid[]>(() => api(`/evidence?${new URLSearchParams({ ...(filter.entity && { entity_id: filter.entity }), ...(filter.category && { category: filter.category }) })}`), [filter.entity, filter.category]);
+  const allEnts = useLoad<Entity[]>(() => api("/entities"));
+  const allCats = useLoad<string[]>(() => api("/evidence/categories"));
+  const [filter, setFilter] = useState({ entity: entityId ? String(entityId) : "", category: "" });
+  const evAll = useLoad<Evid[]>(() => api(`/evidence?${new URLSearchParams({ ...(filter.entity && { entity_id: filter.entity }), ...(filter.category && { category: filter.category }) })}`), [filter.entity, filter.category]);
+  const ents = { ...allEnts, data: allEnts.data && (entityId ? allEnts.data.filter((x) => x.id === entityId) : allEnts.data) };
+  const cats = { ...allCats, data: allCats.data && (categories ? allCats.data.filter((c) => categories.includes(c)) : allCats.data) };
+  const ev = { ...evAll, data: evAll.data && (categories ? evAll.data.filter((r) => categories.includes(r.category)) : evAll.data),
+    reload: () => { evAll.reload(); onChange?.(); } };
   const [preview, setPreview] = useState<string | null>(null);
   const [replace, setReplace] = useState<Evid | null>(null);
   const [clean, setClean] = useState<Evid | null>(null);
   const act = useAction();
+  const today = new Date().toISOString().slice(0, 10);
+  const soon = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
   if (!ents.data || !cats.data) return <Loading />;
-  if (!ents.data.length) return <Empty>Add a legal entity first; every document belongs to exactly one entity.</Empty>;
+  if (!ents.data.length) return <Empty>{t("Add a client firm first; every document belongs to exactly one firm.")}</Empty>;
   return (
     <div className="space-y-5">
       {can("vault.write") && <Upload ents={ents.data} cats={cats.data} replace={replace} done={() => { setReplace(null); ev.reload(); }} />}
       <ErrorBox error={act.error} />
-      <Panel title="Records" actions={<>
+      <Panel title={entityId ? "Records" : "Records"} actions={entityId ? undefined : <>
         <select aria-label="Filter by entity" className={`${inputCls} w-56`} value={filter.entity} onChange={(e) => setFilter({ ...filter, entity: e.target.value })}>
-          <option value="">All entities</option>{ents.data.map((x) => <option key={x.id} value={x.id}>{x.legal_name}</option>)}</select>
+          <option value="">All firms</option>{ents.data.map((x) => <option key={x.id} value={x.id}>{x.legal_name}</option>)}</select>
         <select aria-label="Filter by category" className={`${inputCls} w-48`} value={filter.category} onChange={(e) => setFilter({ ...filter, category: e.target.value })}>
           <option value="">All categories</option>{cats.data.map((c) => <option key={c} value={c}>{c.replace(/_/g, " ")}</option>)}</select></>}>
         {!ev.data?.length ? <Empty>No records in this view.</Empty> : (
           <div className="overflow-x-auto"><table className="datagrid">
-            <thead><tr><th>Document</th><th>Entity</th><th>Validity</th><th>Values</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Document</th><th>Firm</th><th>Validity</th><th>Values</th><th>Status</th><th></th></tr></thead>
             <tbody>{ev.data.map((r) => (
               <tr key={r.id}>
                 <td className="max-w-xs">{r.title}<div className="text-xs text-muted">{r.category.replace(/_/g, " ")}, v{r.version}{r.issuer && `, ${r.issuer}`}</div>
                   {r.issues.map((i) => <div key={i} className="text-xs text-gap">{i}</div>)}</td>
                 <td className="text-sm">{r.entity_name}{r.name_mismatch && <div className="text-xs text-fail">Name on document: {r.subject_name_on_document}</div>}</td>
-                <td className="text-sm">{r.expiry_date ? `Expires ${fmtDay(r.expiry_date)}` : "No expiry"}</td>
+                <td className={`text-sm ${r.expiry_date && r.expiry_date < today ? "text-fail" : r.expiry_date && r.expiry_date <= soon ? "text-gap" : ""}`}>
+                  {r.expiry_date ? `${r.expiry_date < today ? "Expired" : "Expires"} ${fmtDay(r.expiry_date)}` : "No expiry"}</td>
                 <td className="max-w-xs text-xs">{Object.entries(r.fields).map(([k, v]) => <div key={k}>{k.replace(/_/g, " ")}: {String(v)}</div>)}</td>
                 <td><Status s={r.verification_state} /></td>
                 <td className="whitespace-nowrap">
@@ -90,8 +100,8 @@ function Evidence() {
   );
 }
 
-function Upload({ ents, cats, replace, done }: { ents: Entity[]; cats: string[]; replace: Evid | null; done: () => void }) {
-  const init = () => ({ legal_entity_id: String(replace?.legal_entity_id || ents[0].id), category: replace?.category || "completion_certificate", title: replace?.title || "",
+export function Upload({ ents, cats, replace, done }: { ents: Entity[]; cats: string[]; replace: Evid | null; done: () => void }) {
+  const init = () => ({ legal_entity_id: String(replace?.legal_entity_id || ents[0].id), category: replace?.category || (cats.includes("completion_certificate") ? "completion_certificate" : cats[0]), title: replace?.title || "",
     issuer: replace?.issuer || "", subject_name_on_document: "", issue_date: "", expiry_date: "", fields: { ...(replace?.fields || {}) } as Record<string, string> });
   const [f, setF] = useState(init);
   const [key, setKey] = useState(replace?.id);
@@ -114,11 +124,11 @@ function Upload({ ents, cats, replace, done }: { ents: Entity[]; cats: string[];
       <ErrorBox error={act.error} />
       <Notice>Enter values exactly as printed on the document. TenderPilot does not create or alter certificates; records stay unverified until a reviewer checks them against the original.</Notice>
       <form onSubmit={submit} className="grid gap-3 sm:grid-cols-3">
-        <Field label="Legal entity"><select className={inputCls} value={f.legal_entity_id} onChange={(e) => setF({ ...f, legal_entity_id: e.target.value })}>{ents.map((x) => <option key={x.id} value={x.id}>{x.legal_name}</option>)}</select></Field>
+        <Field label="Firm"><select className={inputCls} value={f.legal_entity_id} onChange={(e) => setF({ ...f, legal_entity_id: e.target.value })}>{ents.map((x) => <option key={x.id} value={x.id}>{x.legal_name}</option>)}</select></Field>
         <Field label="Category"><select className={inputCls} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{cats.map((c) => <option key={c} value={c}>{c.replace(/_/g, " ")}</option>)}</select></Field>
         <Field label="Title"><input required className={inputCls} value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} /></Field>
         <Field label="Issued by"><input className={inputCls} value={f.issuer} onChange={(e) => setF({ ...f, issuer: e.target.value })} /></Field>
-        <Field label="Name printed on document" hint="Leave blank if identical to the entity's legal name."><input className={inputCls} value={f.subject_name_on_document} onChange={(e) => setF({ ...f, subject_name_on_document: e.target.value })} /></Field>
+        <Field label="Name printed on document" hint="Leave blank if identical to the firm's legal name."><input className={inputCls} value={f.subject_name_on_document} onChange={(e) => setF({ ...f, subject_name_on_document: e.target.value })} /></Field>
         <div className="grid grid-cols-2 gap-2"><Field label="Issue date"><input type="date" className={inputCls} value={f.issue_date} onChange={(e) => setF({ ...f, issue_date: e.target.value })} /></Field>
           <Field label="Expiry date"><input type="date" className={inputCls} value={f.expiry_date} onChange={(e) => setF({ ...f, expiry_date: e.target.value })} /></Field></div>
         {fieldKeys.map((k) => (
@@ -138,45 +148,7 @@ function Upload({ ents, cats, replace, done }: { ents: Entity[]; cats: string[];
   );
 }
 
-function Entities() {
-  const { can } = useMe();
-  const ents = useLoad<Entity[]>(() => api("/entities"));
-  const blank = { legal_name: "", entity_type: "company", registered_address: "", pan: "", gstin: "", signatory_name: "", signatory_designation: "" };
-  const [f, setF] = useState(blank);
-  const [warn, setWarn] = useState<string[]>([]);
-  const act = useAction();
-  return (
-    <div className="space-y-5">
-      {can("vault.write") && (
-        <Panel title="Add legal entity">
-          <ErrorBox error={act.error} />
-          {warn.length > 0 && <Notice tone="warn">Similar name already exists: {warn.join(", ")}. Records are never shared between entities without approved attribution.</Notice>}
-          <form className="grid gap-3 sm:grid-cols-3" onSubmit={(e) => { e.preventDefault(); act.run(async () => { const r = await api("/entities", { json: { ...f, pan: f.pan || null, gstin: f.gstin || null } }); setWarn(r.similar_names_warning || []); }, () => { setF(blank); ents.reload(); }); }}>
-            <Field label="Legal name (as registered)"><input required className={inputCls} value={f.legal_name} onChange={(e) => setF({ ...f, legal_name: e.target.value })} /></Field>
-            <Field label="Constitution"><select className={inputCls} value={f.entity_type} onChange={(e) => setF({ ...f, entity_type: e.target.value })}>
-              {["company", "llp", "partnership", "proprietorship", "individual", "public_sector"].map((x) => <option key={x}>{x}</option>)}</select></Field>
-            <Field label="Registered address"><input className={inputCls} value={f.registered_address} onChange={(e) => setF({ ...f, registered_address: e.target.value })} /></Field>
-            <Field label="PAN"><input className={inputCls} value={f.pan} onChange={(e) => setF({ ...f, pan: e.target.value.toUpperCase() })} /></Field>
-            <Field label="GSTIN"><input className={inputCls} value={f.gstin} onChange={(e) => setF({ ...f, gstin: e.target.value.toUpperCase() })} /></Field>
-            <Field label="Authorised signatory"><input className={inputCls} value={f.signatory_name} onChange={(e) => setF({ ...f, signatory_name: e.target.value })} /></Field>
-            <Field label="Signatory designation"><input className={inputCls} value={f.signatory_designation} onChange={(e) => setF({ ...f, signatory_designation: e.target.value })} /></Field>
-            <div className="flex items-end"><Button disabled={act.busy}>Add entity</Button></div>
-          </form>
-        </Panel>
-      )}
-      <Panel title="Entities">
-        {!ents.data?.length ? <Empty>No legal entities yet.</Empty> : (
-          <table className="datagrid"><thead><tr><th>Legal name</th><th>Constitution</th><th>PAN</th><th>GSTIN</th><th>Signatory</th></tr></thead>
-            <tbody>{ents.data.map((x) => <tr key={x.id}><td>{x.legal_name}<div className="text-xs text-muted">{x.registered_address}</div></td><td>{x.entity_type}</td><td>{x.pan || "—"}</td><td>{x.gstin || "—"}</td>
-              <td>{x.signatory_name ? `${x.signatory_name}, ${x.signatory_designation || ""}` : <span className="text-gap">Not recorded</span>}</td></tr>)}</tbody></table>
-        )}
-        <p className="mt-2 text-xs text-muted">PAN and GSTIN are masked in general views.</p>
-      </Panel>
-    </div>
-  );
-}
-
-function JVs() {
+export function JVs() {
   const { can } = useMe();
   const ents = useLoad<Entity[]>(() => api("/entities"));
   const jvs = useLoad<{ id: number; name: string; share_total: string; members: { legal_entity_id: number; legal_name: string; role: string; share_pct: string }[] }[]>(() => api("/jvs"));

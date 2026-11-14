@@ -11,9 +11,10 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from ..audit import audit
 from ..deps import Ctx, get_ctx
-from ..models import (DOC_CLASSES, JV, WORKFLOW_STEPS, ChecklistTask, ExtractionJob, LegalEntity, Requirement,
+from ..models import (DOC_CLASSES, JV, WORKFLOW_STEPS, JVMember, ChecklistTask, ExtractionJob, LegalEntity, Requirement,
                       RequirementVersion, SourceDocument, SourcePage, Tender, TenderVersion)
-from ..services import jobs, precedence
+from ..services import firms, jobs, precedence
+from ..services.money import try_D
 from ..services.checklist import generate_checklist
 from ..services.dates import parse_date
 from ..services.eligibility import blockers, propose_rules
@@ -75,9 +76,109 @@ def tender_summary(ctx: Ctx, t: Tender) -> dict:
 
 
 @router.get("")
-def list_tenders(ctx: Ctx = Depends(get_ctx)):
+def list_tenders(firm: int | None = None, ctx: Ctx = Depends(get_ctx)):
+    """All tenders, or only those a client firm takes part in (alone or in a JV)."""
     ctx.require("tender.read")
-    return [tender_summary(ctx, t) for t in ctx.db.scalars(select(Tender).where(Tender.org_id == ctx.org_id).order_by(Tender.id.desc()))]
+    rows = ctx.db.scalars(select(Tender).where(Tender.org_id == ctx.org_id).order_by(Tender.id.desc()))
+    if firm is not None:
+        ctx.own(ctx.db.get(LegalEntity, firm), "Firm")
+        ids = {x["id"] for x in firms.tenders_for(ctx.db, ctx.org_id, firm)}
+        rows = [t for t in rows if t.id in ids]
+    return [tender_summary(ctx, t) for t in rows]
+
+
+def _mark_evaluations_stale(ctx: Ctx, t: Tender) -> None:
+    from ..models import Evaluation
+    for ev in ctx.db.scalars(select(Evaluation).where(Evaluation.tender_id == t.id, Evaluation.stale.is_(False))):
+        ev.stale, ev.stale_reason = True, "Bidder or cutoff changed; re-evaluate"
+
+
+class MemberIn(BaseModel):
+    legal_entity_id: int
+    role: str = "member"
+    share_pct: str
+
+
+class ParticipantsIn(BaseModel):
+    mode: str  # single | jv
+    entity_id: int | None = None
+    jv_name: str | None = Field(default=None, max_length=300)
+    members: list[MemberIn] = []
+    row_version: int
+
+
+@router.get("/{tender_id}/participants")
+def get_participants(tender_id: int, ctx: Ctx = Depends(get_ctx)):
+    ctx.require("tender.read")
+    return firms.participants(ctx.db, ctx.tender(tender_id))
+
+
+@router.put("/{tender_id}/participants")
+def set_participants(tender_id: int, body: ParticipantsIn, ctx: Ctx = Depends(get_ctx)):
+    """Choose who bids: one firm from the library, or a JV of library firms built for this tender.
+    The firms' credentials are used as they are; nothing is copied or typed again."""
+    ctx.require("tender.write")
+    t = ctx.tender(tender_id)
+    if t.row_version != body.row_version:
+        raise HTTPException(409, "This tender was changed by someone else. Reload and try again.")
+    before = (t.bidder_type, t.bidder_entity_id, t.jv_id, _jv_signature(ctx, t.jv_id))
+    if body.mode == "single":
+        if not body.entity_id:
+            raise HTTPException(422, "Choose the firm that bids")
+        ctx.own(ctx.db.get(LegalEntity, body.entity_id), "Firm")
+        t.bidder_type, t.bidder_entity_id, t.jv_id = "entity", body.entity_id, None
+    elif body.mode == "jv":
+        ids = [m.legal_entity_id for m in body.members]
+        if len(ids) < 2 or len(set(ids)) != len(ids):
+            raise HTTPException(422, "A JV needs at least two different firms")
+        if sum(1 for m in body.members if m.role == "lead") != 1 or any(m.role not in ("lead", "member") for m in body.members):
+            raise HTTPException(422, "Mark exactly one firm as lead partner")
+        shares = []
+        for m in body.members:
+            ctx.own(ctx.db.get(LegalEntity, m.legal_entity_id), "Firm")
+            s = try_D(m.share_pct)
+            if s is None or s <= 0 or s > 100:
+                raise HTTPException(422, "Each share must be more than 0 and at most 100 %")
+            shares.append(s)
+        if sum(shares) != 100:
+            raise HTTPException(422, f"JV shares must total 100 % (now {sum(shares)} %)")
+        names = [ctx.db.get(LegalEntity, m.legal_entity_id) for m in body.members]
+        lead = next(n for n, m in zip(names, body.members) if m.role == "lead")
+        name = (body.jv_name or "").strip() or (lead.legal_name + " – " + " – ".join(
+            n.legal_name for n, m in zip(names, body.members) if m.role != "lead") + " (JV)")[:300]
+        jv = ctx.db.get(JV, t.jv_id) if t.jv_id else None
+        if jv is None or jv.tender_id != t.id:
+            # a JV saved in the library (or used elsewhere) is never changed: this tender gets its own
+            jv = JV(org_id=ctx.org_id, tender_id=t.id, name=name)
+            ctx.db.add(jv)
+        else:
+            jv.name = name
+            jv.members.clear()
+        for m, s in zip(body.members, shares):
+            jv.members.append(JVMember(legal_entity_id=m.legal_entity_id, role=m.role, share_pct=s))
+        ctx.db.flush()
+        t.bidder_type, t.bidder_entity_id, t.jv_id = "jv", None, jv.id
+    else:
+        raise HTTPException(422, "mode must be single or jv")
+    try:
+        ctx.db.flush()
+    except StaleDataError:
+        ctx.db.rollback()
+        raise HTTPException(409, "Concurrent edit detected. Reload and try again.")
+    if before != (t.bidder_type, t.bidder_entity_id, t.jv_id, _jv_signature(ctx, t.jv_id)):
+        generate_checklist(ctx.db, t)
+        _mark_evaluations_stale(ctx, t)
+    if (t.step_state or {}).get("choose_bidder", {}).get("status") != "done":  # tender route: step 5 is done
+        t.step_state = {**(t.step_state or {}), "choose_bidder": {"status": "done", "at": datetime.now(timezone.utc).isoformat()}}
+    audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="tender.participants", subject_type="tender", subject_id=t.id,
+          tender_id=t.id, mode=body.mode, firms=[body.entity_id] if body.mode == "single" else [m.legal_entity_id for m in body.members])
+    ctx.db.commit()
+    return {"tender": tender_summary(ctx, t), "participants": firms.participants(ctx.db, t)}
+
+
+def _jv_signature(ctx: Ctx, jv_id: int | None):
+    jv = ctx.db.get(JV, jv_id) if jv_id else None
+    return tuple(sorted((m.legal_entity_id, m.role, str(m.share_pct)) for m in jv.members)) if jv else None
 
 
 @router.post("")
@@ -161,11 +262,7 @@ def patch_tender(tender_id: int, body: TenderPatch, ctx: Ctx = Depends(get_ctx))
     if changed_bidder:
         generate_checklist(ctx.db, t)
     if changed_bidder or changed_cutoff:
-        ids = [r.id for r in ctx.db.scalars(select(Requirement).where(Requirement.tender_id == t.id))]
-        if ids:
-            from ..models import Evaluation
-            for ev in ctx.db.scalars(select(Evaluation).where(Evaluation.tender_id == t.id, Evaluation.stale.is_(False))):
-                ev.stale, ev.stale_reason = True, "Bidder or cutoff changed; re-evaluate"
+        _mark_evaluations_stale(ctx, t)
     audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="tender.updated", subject_type="tender", subject_id=t.id,
           tender_id=t.id, fields=list(data))
     ctx.db.commit()

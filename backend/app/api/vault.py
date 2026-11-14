@@ -11,8 +11,8 @@ from sqlalchemy import select
 
 from ..audit import audit
 from ..deps import Ctx, get_ctx
-from ..models import EVIDENCE_CATEGORIES, JV, EvidenceDerivative, EvidenceLink, EvidenceRecord, JVMember, LegalEntity
-from ..services import scanfix
+from ..models import EVIDENCE_CATEGORIES, JV, EvidenceDerivative, EvidenceLink, EvidenceRecord, JVMember, LegalEntity, Organization
+from ..services import firms, scanfix
 from ..services.eligibility import norm_name
 from ..services.ingest import UnsafeFile, sniff_kind
 from ..services.money import try_D
@@ -32,26 +32,69 @@ class EntityIn(BaseModel):
     signatory_designation: str | None = None
     contacts: dict = {}
     registrations: dict = {}
+    profile: dict | None = None
+
+
+class EntityPatch(BaseModel):
+    """Partial update: only the fields sent are changed."""
+    legal_name: str | None = Field(default=None, min_length=1)
+    entity_type: str | None = None
+    registered_address: str | None = None
+    pan: str | None = None
+    gstin: str | None = None
+    signatory_name: str | None = None
+    signatory_designation: str | None = None
+    contacts: dict | None = None
+    registrations: dict | None = None
+    profile: dict | None = None
 
 
 def entity_out(e: LegalEntity, reveal: bool) -> dict:
     d = to_dict(e)
+    d["profile"] = e.profile or {}
     if not reveal:
         d["pan"], d["gstin"] = mask(e.pan), mask(e.gstin)
+        for k in ("bank_account",):
+            if d["profile"].get(k):
+                d["profile"] = {**d["profile"], k: mask(d["profile"][k])}
     return d
 
 
 @router.get("/entities")
-def list_entities(reveal: bool = False, ctx: Ctx = Depends(get_ctx)):
+def list_entities(reveal: bool = False, summary: bool = False, ctx: Ctx = Depends(get_ctx)):
     ctx.require("vault.read")
     reveal = reveal and ctx.can("vault.write")
-    return [entity_out(e, reveal) for e in ctx.db.scalars(select(LegalEntity).where(LegalEntity.org_id == ctx.org_id).order_by(LegalEntity.legal_name))]
+    out = []
+    for e in ctx.db.scalars(select(LegalEntity).where(LegalEntity.org_id == ctx.org_id).order_by(LegalEntity.legal_name)):
+        d = entity_out(e, reveal)
+        if summary:
+            d["summary"] = firms.summary(ctx.db, e, with_tenders=False)
+            d["tender_count"] = len(firms.tenders_for(ctx.db, ctx.org_id, e.id))
+        out.append(d)
+    return out
+
+
+@router.get("/entities/{entity_id}")
+def get_entity(entity_id: int, reveal: bool = False, ctx: Ctx = Depends(get_ctx)):
+    """One client firm: profile, credential summary and the tenders it is part of."""
+    ctx.require("vault.read")
+    e = ctx.own(ctx.db.get(LegalEntity, entity_id), "Entity")
+    return {**entity_out(e, reveal and ctx.can("vault.write")), "summary": firms.summary(ctx.db, e)}
+
+
+@router.get("/firms/schema")
+def firm_schema(ctx: Ctx = Depends(get_ctx)):
+    """Credential groups (tabs) and profile fields for the client-firm screens."""
+    ctx.require("vault.read")
+    return {"groups": firms.GROUPS, "profile_fields": firms.PROFILE_FIELDS, "agency_fields": firms.AGENCY_FIELDS}
 
 
 @router.post("/entities")
 def create_entity(body: EntityIn, ctx: Ctx = Depends(get_ctx)):
     ctx.require("vault.write")
-    e = LegalEntity(org_id=ctx.org_id, **body.model_dump())
+    data = body.model_dump()
+    data["profile"] = firms.clean_profile(data.get("profile"), firms.PROFILE_FIELDS) or None
+    e = LegalEntity(org_id=ctx.org_id, **data)
     ctx.db.add(e)
     ctx.db.flush()
     similar = [x.legal_name for x in ctx.db.scalars(select(LegalEntity).where(LegalEntity.org_id == ctx.org_id, LegalEntity.id != e.id))
@@ -62,10 +105,15 @@ def create_entity(body: EntityIn, ctx: Ctx = Depends(get_ctx)):
 
 
 @router.put("/entities/{entity_id}")
-def update_entity(entity_id: int, body: EntityIn, ctx: Ctx = Depends(get_ctx)):
+def update_entity(entity_id: int, body: EntityPatch, ctx: Ctx = Depends(get_ctx)):
     ctx.require("vault.write")
     e = ctx.own(ctx.db.get(LegalEntity, entity_id), "Entity")
-    for k, v in body.model_dump().items():
+    # Only the fields sent are changed: an older screen that does not know the profile cannot wipe it.
+    for k, v in body.model_dump(exclude_unset=True).items():
+        if k == "profile":
+            v = firms.clean_profile({**(e.profile or {}), **(v or {})}, firms.PROFILE_FIELDS) or None
+        elif v is None and k in ("legal_name", "entity_type", "registered_address", "contacts", "registrations"):
+            continue  # required columns are never blanked
         setattr(e, k, v)
     audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="entity.updated", subject_type="legal_entity", subject_id=e.id)
     ctx.db.commit()
@@ -338,3 +386,27 @@ def approve_attribution(body: AttributionIn, ctx: Ctx = Depends(get_ctx)):
           subject_id=ev.id, tender_id=body.tender_id)
     ctx.db.commit()
     return to_dict(link)
+
+
+# ---------------------------------------------------------------- the submitting company's own profile
+@router.get("/org/profile")
+def get_org_profile(ctx: Ctx = Depends(get_ctx)):
+    ctx.require("vault.read")
+    org = ctx.db.get(Organization, ctx.org_id)
+    return {"name": org.name, **(org.profile or {})}
+
+
+@router.put("/org/profile")
+def put_org_profile(body: dict, ctx: Ctx = Depends(get_ctx)):
+    ctx.require("org.admin")
+    org = ctx.db.get(Organization, ctx.org_id)
+    data = firms.clean_profile(body, firms.AGENCY_FIELDS)
+    if data.get("name"):
+        org.name = data.pop("name")
+    else:
+        data.pop("name", None)
+    org.profile = data or None
+    audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="org.profile_updated", subject_type="organization",
+          subject_id=org.id)
+    ctx.db.commit()
+    return {"name": org.name, **(org.profile or {})}

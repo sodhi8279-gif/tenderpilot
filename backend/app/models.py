@@ -26,6 +26,8 @@ class Organization(Base, TimestampMixin):
     # External AI is off unless an admin explicitly enables it (data-flow disclosure).
     allow_external_ai: Mapped[bool] = mapped_column(Boolean, default=False)
     retention_days: Mapped[int] = mapped_column(Integer, default=0)  # 0 = keep
+    # Added in update 0006 (empty for existing data): the submitting company's own details (address, contacts, GST...).
+    profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class AiSettings(Base, TimestampMixin):
@@ -106,6 +108,8 @@ class LegalEntity(Base, TimestampMixin):
     contacts: Mapped[dict] = mapped_column(JSON, default=dict)
     registrations: Mapped[dict] = mapped_column(JSON, default=dict)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Added in update 0006 (empty for existing firms): client-firm profile (CIN, Udyam, EPF/ESI, contacts, bank...).
+    profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class JV(Base, TimestampMixin):

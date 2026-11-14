@@ -36,7 +36,9 @@ def main() -> None:
         if db.scalar(select(Organization).where(Organization.name == ORG_NAME)):
             print("Demo organization already exists; nothing changed.")
             return
-        org = Organization(name=ORG_NAME)
+        org = Organization(name=ORG_NAME, profile={  # the bid-submission company; bidders are its client firms
+            "address": "5 Demo Business Park, Demo City", "phone": "0000-111111", "email": "bids@demo-bid-desk.example",
+            "contact_person": "Bid Manager (SYNTHETIC)"})
         db.add(org)
         db.flush()
         tokens = {}
@@ -57,7 +59,11 @@ def main() -> None:
 
         ent = post("/api/v1/entities", json={"legal_name": "Demo Infra Projects Private Limited (SYNTHETIC)",
                                              "registered_address": "1 Demo Road, Demo City", "signatory_name": "A. Kumar",
-                                             "signatory_designation": "Director"})
+                                             "signatory_designation": "Director", "pan": "AAACD0000A", "gstin": "00AAACD0000A1Z0",
+                                             "profile": {"cin": "U00000XX2010PTC000000", "udyam": "UDYAM-XX-00-0000000",
+                                                         "email": "tenders@demoinfra.example", "phone": "0000-000000",
+                                                         "contact_person": "R. Sharma", "bank_name": "Demo Bank (SYNTHETIC)",
+                                                         "bank_account": "000000000000", "bank_ifsc": "DEMO0000001"}})
 
         def ev(cat, title, fields=None, expiry=None):
             data = {"legal_entity_id": str(ent["id"]), "category": cat, "title": title,
@@ -92,8 +98,11 @@ def main() -> None:
         # companies can meet. Shows the "How to qualify" planner.
         partner_ids = {}
         for key, spec in TECH_PARTNERS.items():
+            n = len(partner_ids) + 1
             pe = post("/api/v1/entities", json={"legal_name": spec["legal_name"], "registered_address": "Demo Industrial Area",
-                                                "signatory_name": "B. Singh", "signatory_designation": "Partner"})
+                                                "signatory_name": "B. Singh", "signatory_designation": "Partner",
+                                                "pan": f"AAAFP000{n}B", "gstin": f"00AAAFP000{n}B1Z{n}",
+                                                "profile": {"email": f"bids{n}@partner.example", "phone": f"0000-00000{n}"}})
             partner_ids[key] = pe["id"]
             for cat, title, fields, expiry in spec["records"]:
                 data = {"legal_entity_id": str(pe["id"]), "category": cat, "title": title, "fields": json.dumps(fields),

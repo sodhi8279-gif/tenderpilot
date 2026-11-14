@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { useMe } from "../App";
 import SoftwareUpdate from "./SoftwareUpdate";
+import YourCompany from "./YourCompany";
 import { Button, cx, Empty, ErrorBox, Field, fmtDate, inputCls, Loading, Notice, Panel, useAction, useLoad } from "../ui";
 
 const ROLES = ["org_admin", "tender_manager", "technical_reviewer", "estimator", "document_coordinator", "finance_reviewer", "authorized_approver", "auditor"];
@@ -194,6 +195,7 @@ export default function Settings() {
     <div className="mx-auto max-w-6xl space-y-5">
       <h1 className="text-2xl font-semibold tracking-tight">Settings and audit</h1>
       <ErrorBox error={act.error} />
+      <YourCompany />
       {admin && <SoftwareUpdate />}
       <SystemChecks admin={admin} />
       <AiProvider admin={admin} onChange={() => { refresh(); audit.reload(); }} />

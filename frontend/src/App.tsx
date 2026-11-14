@@ -7,6 +7,7 @@ import Portfolio from "./pages/Portfolio";
 import NewTender from "./pages/NewTender";
 import TenderPage from "./pages/tender/TenderPage";
 import Vault from "./pages/Vault";
+import FirmPage from "./pages/FirmPage";
 import Settings from "./pages/Settings";
 
 export type Me = { user: { id: number; name: string; email: string }; org: { id: number; name: string; allow_external_ai: boolean };
@@ -63,7 +64,7 @@ function Login() {
 
 const NAV: [string, string, string][] = [
   ["/", "Tenders", "M4 5h16M4 12h16M4 19h10"],
-  ["/vault", "Company vault", "M5 4h14v16H5zM9 8h6M9 12h6"],
+  ["/vault", "Client firms", "M5 4h14v16H5zM9 8h6M9 12h6"],
   ["/settings", "Settings & audit", "M12 8a4 4 0 100 8 4 4 0 000-8zM12 2v3M12 19v3M2 12h3M19 12h3"],
 ];
 
@@ -115,6 +116,7 @@ function Shell() {
             <Route path="/tenders/new" element={<NewTender />} />
             <Route path="/tenders/:id/*" element={<TenderPage />} />
             <Route path="/vault" element={<Vault />} />
+            <Route path="/firms/:id" element={<FirmPage />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
