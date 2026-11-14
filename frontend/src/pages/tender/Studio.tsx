@@ -1,12 +1,15 @@
 import { useState } from "react";
 import { api, blobUrl, download } from "../../api";
 import { useMe } from "../../App";
+import PdfBoxes from "./PdfBoxes";
 import { Button, Empty, ErrorBox, fmtDate, inputCls, Loading, Notice, Panel, Status, Tabs, useAction, useLoad } from "../../ui";
 
 type Tpl = { id: number; name: string; kind: string; builtin_key: string | null; envelope: string; placeholders: string[] };
 type Gen = { id: number; template_id: number; name: string; revision: number; status: string; missing_fields: string[]; qa_issues: { type: string; text?: string }[];
   stale: boolean; envelope: string; signing_required: boolean; certification_required: string | null; signed_sha256: string | null;
-  signed_has_digital_signature: boolean; created_at: string };
+  signed_has_digital_signature: boolean; created_at: string; docx_key: string | null };
+const SOURCE: Record<string, (n: number) => string> = { builtin: () => "Built-in", docx: (n) => `Tender form (DOCX), ${n} fields`,
+  pdf_form: (n) => `Fillable PDF form, ${n} fields`, pdf_overlay: (n) => `Scanned / flat PDF form, ${n} boxes` };
 
 export default function Studio({ tid }: { tid: number }) {
   const [tab, setTab] = useState("forms");
@@ -23,29 +26,35 @@ function Forms({ tid }: { tid: number }) {
   const tpls = useLoad<{ templates: Tpl[]; fields: Record<string, string> }>(() => api(`/tenders/${tid}/templates`), [tid]);
   const gens = useLoad<Gen[]>(() => api(`/tenders/${tid}/generated`), [tid]);
   const [map, setMap] = useState<number | null>(null);
+  const [boxesFor, setBoxesFor] = useState<number | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const act = useAction();
   const generate = (id: number) => act.run(() => api(`/tenders/${tid}/templates/${id}/generate`, { json: {} }), gens.reload);
   const uploadTpl = (f: File | undefined) => {
     if (!f) return;
-    const fd = new FormData(); fd.append("file", f); fd.append("name", f.name.replace(/\.docx$/i, "")); fd.append("envelope", "technical");
-    act.run(async () => { const r = await api(`/tenders/${tid}/templates`, { form: fd }); setMap(r.id); }, tpls.reload);
+    const fd = new FormData(); fd.append("file", f); fd.append("name", f.name.replace(/\.(docx|pdf)$/i, "")); fd.append("envelope", "technical");
+    act.run(async () => {
+      const r = await api(`/tenders/${tid}/templates`, { form: fd });
+      if (r.kind === "pdf_overlay") { setMap(null); setBoxesFor(r.id); } else { setBoxesFor(null); setMap(r.id); }
+    }, tpls.reload);
   };
   if (!tpls.data) return <Loading />;
   return (
     <div className="space-y-5">
       <ErrorBox error={act.error} />
-      <Notice>Use the tender's own prescribed forms first: upload them as DOCX with {"{{placeholders}}"} and confirm each mapping. Built-in letters are fallbacks. Nothing is ever marked signed until the signed copy is uploaded.</Notice>
-      <Panel title="Templates" actions={can("docs.generate") && <label className="cursor-pointer text-sm font-medium text-teal underline">Upload tender form (DOCX)
-        <input type="file" accept=".docx" className="sr-only" onChange={(e) => { uploadTpl(e.target.files?.[0]); e.target.value = ""; }} /></label>}>
+      <Notice>Use the tender's own prescribed forms first: upload them as DOCX with {"{{placeholders}}"}, as a fillable PDF, or as a scanned PDF (then click where each value goes), and confirm each mapping. Built-in letters are fallbacks. Nothing is ever marked signed until the signed copy is uploaded.</Notice>
+      <Panel title="Templates" actions={can("docs.generate") && <label className="cursor-pointer text-sm font-medium text-teal underline">Upload tender form (DOCX or PDF)
+        <input type="file" accept=".docx,.pdf" className="sr-only" onChange={(e) => { uploadTpl(e.target.files?.[0]); e.target.value = ""; }} /></label>}>
         <div className="overflow-x-auto"><table className="datagrid">
           <thead><tr><th>Template</th><th>Envelope</th><th>Source</th><th></th></tr></thead>
           <tbody>{tpls.data.templates.map((x) => (
-            <tr key={x.id}><td>{x.name}</td><td>{x.envelope}</td><td className="text-sm text-muted">{x.kind === "builtin" ? "Built-in" : `Tender form, ${x.placeholders.length} fields`}</td>
-              <td className="whitespace-nowrap">{x.kind === "docx" && <Button kind="ghost" onClick={() => setMap(map === x.id ? null : x.id)}>Map fields</Button>}
+            <tr key={x.id}><td>{x.name}</td><td>{x.envelope}</td><td className="text-sm text-muted">{(SOURCE[x.kind] || SOURCE.docx)(x.placeholders.length)}</td>
+              <td className="whitespace-nowrap">{x.kind === "pdf_overlay" && can("docs.generate") && <Button kind="ghost" onClick={() => { setMap(null); setBoxesFor(boxesFor === x.id ? null : x.id); }}>Place boxes</Button>}
+                {x.kind !== "builtin" && <Button kind="ghost" onClick={() => { setBoxesFor(null); setMap(map === x.id ? null : x.id); }}>Map fields</Button>}
                 {can("docs.generate") && <Button kind="secondary" disabled={act.busy} onClick={() => generate(x.id)}>Generate</Button>}</td></tr>))}</tbody>
         </table></div>
-        {map && <Mapping tid={tid} templateId={map} fields={tpls.data.fields} />}
+        {boxesFor && <PdfBoxes key={boxesFor} tid={tid} templateId={boxesFor} fields={tpls.data.fields} onSaved={() => { const id = boxesFor; setBoxesFor(null); setMap(id); tpls.reload(); }} />}
+        {map && <Mapping key={map} tid={tid} templateId={map} fields={tpls.data.fields} />}
       </Panel>
       <Panel title="Generated documents">
         {!gens.data?.length ? <Empty>Nothing generated yet.</Empty> : (
@@ -59,7 +68,8 @@ function Forms({ tid }: { tid: number }) {
                   {g.qa_issues.filter((q) => q.type !== "missing_field").length > 0 && <div className="text-gap">{g.qa_issues.filter((q) => q.type !== "missing_field").length} layout warning(s)</div>}</td>
                 <td className="whitespace-nowrap">
                   <Button kind="ghost" onClick={() => act.run(async () => setPreview(await blobUrl(`/tenders/${tid}/generated/${g.id}/pdf`)))}>Preview</Button>
-                  <Button kind="ghost" onClick={() => act.run(() => download(`/tenders/${tid}/generated/${g.id}/docx`, `${g.name} r${g.revision}.docx`))}>DOCX</Button>
+                  {g.docx_key ? <Button kind="ghost" onClick={() => act.run(() => download(`/tenders/${tid}/generated/${g.id}/docx`, `${g.name} r${g.revision}.docx`))}>DOCX</Button>
+                    : <Button kind="ghost" onClick={() => act.run(() => download(`/tenders/${tid}/generated/${g.id}/pdf`, `${g.name} r${g.revision}.pdf`))}>PDF</Button>}
                 </td>
                 <td className="text-sm">
                   {g.signed_sha256 ? <div className="text-xs">{g.signed_has_digital_signature ? "Digital signature present" : "Signed scan received"}<br />SHA-256 {g.signed_sha256.slice(0, 10)}…</div>
@@ -95,7 +105,7 @@ function Mapping({ tid, templateId, fields }: { tid: number; templateId: number;
     <div className="mt-4 rounded-md border border-line p-3">
       <ErrorBox error={act.error} />
       <div className="mb-2 text-sm font-medium">Field mapping: confirm every field before generating</div>
-      {m.data.length === 0 ? <Empty>No {"{{placeholders}}"} found in this form.</Empty> : (
+      {m.data.length === 0 ? <Empty>No fields found in this form yet. For a scanned PDF, place boxes first.</Empty> : (
         <table className="datagrid"><thead><tr><th>Field in form</th><th>Fill from</th><th>Or type a value</th><th>Confirmed</th></tr></thead>
           <tbody>{m.data.map((x, i) => (
             <tr key={x.placeholder}><td>{x.placeholder}</td>

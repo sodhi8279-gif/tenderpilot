@@ -50,8 +50,16 @@ def _m0004_evidence_derivatives(conn) -> None:
     Base.metadata.create_all(bind=conn, tables=[models.EvidenceDerivative.__table__])
 
 
+def _m0005_pdf_form_layout(conn) -> None:
+    """Text-box positions for PDF forms. Additive: one new nullable column; existing templates keep NULL."""
+    cols = {c["name"] for c in inspect(conn).get_columns("document_templates")}
+    if "layout" not in cols:
+        conn.execute(text("ALTER TABLE document_templates ADD COLUMN layout JSON"))
+
+
 MIGRATIONS = [("0001_baseline", _m0001_baseline), ("0002_integrations", _m0002_integrations),
-              ("0003_similarity_links", _m0003_similarity_links), ("0004_evidence_derivatives", _m0004_evidence_derivatives)]
+              ("0003_similarity_links", _m0003_similarity_links), ("0004_evidence_derivatives", _m0004_evidence_derivatives),
+              ("0005_pdf_form_layout", _m0005_pdf_form_layout)]
 
 
 def pending_migrations() -> list[str]:

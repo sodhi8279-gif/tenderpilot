@@ -432,6 +432,8 @@ class DocumentTemplate(Base, TimestampMixin):
     placeholders: Mapped[list] = mapped_column(JSON, default=list)
     envelope: Mapped[str] = mapped_column(String(30), default="technical")
     from_tender_form: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Added in update 0005 (empty for existing templates): text-box positions for flat/scanned PDF forms.
+    layout: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
 
 class FieldMapping(Base, TimestampMixin):
