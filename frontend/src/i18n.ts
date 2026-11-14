@@ -66,7 +66,8 @@ const HI: Record<string, string> = {
   "Refresh": "रीफ़्रेश", "Loading…": "लोड हो रहा है…", "Try again": "फिर कोशिश करें", "Cancel": "रद्द करें", "Close": "बंद करें",
   "Re-read with the latest reader": "नए रीडर से दोबारा पढ़ें", "Save ranks": "क्रम सहेजें", "Scenarios": "परिदृश्य",
   "Clean up scan": "स्कैन सुधारें", "Replace": "बदलें", "View": "देखें", "Verify": "सत्यापित करें", "Reject": "अस्वीकार करें",
-  "Generate": "बनाएँ", "Map fields": "फ़ील्ड मिलाएँ", "Place boxes": "बॉक्स लगाएँ", "Preview": "पूर्वावलोकन",
+  "Update available": "अपडेट उपलब्ध", "Software update": "सॉफ़्टवेयर अपडेट", "Check for updates": "अपडेट जाँचें",
+  "Download update": "अपडेट डाउनलोड करें", "Generate": "बनाएँ", "Map fields": "फ़ील्ड मिलाएँ", "Place boxes": "बॉक्स लगाएँ", "Preview": "पूर्वावलोकन",
 };
 
 /** Translate a screen label (returns the English text when no Hindi label exists). */

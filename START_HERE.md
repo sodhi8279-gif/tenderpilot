@@ -54,7 +54,13 @@ After installing, open the Start menu and click **TenderPilot** (or **TenderPilo
 - Treat an unknown as a pass, or check certificates against today's date instead of the tender's cutoff date.
 - Send your documents to an outside AI service unless an administrator turns it on in Settings.
 
-## 4. Optional extras
+## 4. Updates
+
+When a new version is published, administrators see **Update available** in the menu. Open **Settings & audit → Software update**, read
+what is new, click **Download update**, then **Back up my data and install**. TenderPilot saves a full backup first, closes, installs and
+starts again by itself in about a minute. Your tenders and documents are kept. Ask other users to save their work before you install.
+
+## 5. Optional extras
 
 - **Scanned tenders and old Word/Excel files:** Tesseract OCR (English and Hindi) and LibreOffice are installed on this computer. Check they are working under **Settings & audit → System checks**.
 - **AI reading help (optional, paid):** under **Settings & audit → AI provider**, an administrator can connect an Anthropic account. Type the API key only into that screen, never into chat or email. AI suggestions are marked "AI interpretation", show the clause they came from, and must be checked by a person. Amounts, dates and eligibility limits always come from the rule-based reading and your reviewers, never from AI.

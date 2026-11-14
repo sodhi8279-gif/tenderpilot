@@ -4,7 +4,7 @@
 ; Installs per user (no administrator rights needed). User data lives in %LOCALAPPDATA%\TenderPilot[-Demo]
 ; and is never removed by uninstall.
 
-#define AppVersion "1.1.0"
+#define AppVersion "1.2.0"
 #ifdef DEMO
   #define AppName "TenderPilot Demo"
   #define AppIdGuid "{{6C1B7E0A-3F7D-4C38-9B67-2D0E5A9F4D21}"
@@ -70,6 +70,9 @@ Name: "{localappdata}\TenderPilot"; Flags: uninsneveruninstall
 [Run]
 #ifdef DEMO
 Filename: "{app}\TenderPilot.exe"; Parameters: "--demo"; Description: "Start the demo now"; Flags: postinstall nowait skipifsilent
+; Update started from the app (silent): start TenderPilot again; the browser tab that started the update reloads itself.
+Filename: "{app}\TenderPilot.exe"; Parameters: "--demo --no-browser"; Flags: nowait; Check: WizardSilent
 #else
 Filename: "{app}\TenderPilot.exe"; Description: "Start TenderPilot now"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\TenderPilot.exe"; Parameters: "--no-browser {param:relaunchargs|}"; Flags: nowait; Check: WizardSilent
 #endif

@@ -8,6 +8,9 @@ on:
     paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch:
 
+permissions:
+  contents: write  # publish the GitHub Release that installed copies update from
+
 jobs:
   build:
     runs-on: windows-latest
@@ -67,8 +70,60 @@ jobs:
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
           if (-not $ok) { throw "The packaged TenderPilot did not start" }
 
+      - name: Update test (install, add data, update silently, data still there)
+        shell: pwsh
+        run: |
+          function Wait-Up([int]$port) {
+            foreach ($i in 1..90) { try { return Invoke-RestMethod "http://127.0.0.1:$port/api/health" -TimeoutSec 2 } catch { Start-Sleep 2 } }
+            throw "TenderPilot did not answer on port $port"
+          }
+          $setup = (Resolve-Path installer\TenderPilot-Setup.exe).Path
+          # 1. first installation (silent: TenderPilot starts by itself without a browser)
+          Start-Process $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
+          $h = Wait-Up 8471; Write-Host "Installed and running: version $($h.version)"
+          # 2. some data
+          $tok = (Invoke-RestMethod -Method Post http://127.0.0.1:8471/api/v1/setup -ContentType application/json -Body (@{
+            org_name = "Update Test Co"; name = "Admin"; email = "admin@test.local"; password = "update-test-12345" } | ConvertTo-Json)).token
+          $hdr = @{ Authorization = "Bearer $tok" }
+          Invoke-RestMethod -Method Post http://127.0.0.1:8471/api/v1/tenders -Headers $hdr -ContentType application/json -Body (@{
+            title = "Tender kept across updates"; tender_ref = "UPD/1"; department = "Test"; bidder_type = "entity" } | ConvertTo-Json) | Out-Null
+          # 3. update exactly as the app does it: TenderPilot stops, the installer runs silently and starts it again
+          Get-Process TenderPilot -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Process $setup -ArgumentList "/SILENT","/SUPPRESSMSGBOXES","/NORESTART","/CLOSEAPPLICATIONS" -Wait
+          $h = Wait-Up 8471; Write-Host "Restarted after update: version $($h.version)"
+          # 4. data still there
+          $tok2 = (Invoke-RestMethod -Method Post http://127.0.0.1:8471/api/v1/auth/login -ContentType application/json -Body (@{
+            email = "admin@test.local"; password = "update-test-12345" } | ConvertTo-Json)).token
+          $titles = (Invoke-RestMethod http://127.0.0.1:8471/api/v1/tenders -Headers @{ Authorization = "Bearer $tok2" }).title
+          if ($titles -notcontains "Tender kept across updates") { throw "Data was lost in the update" }
+          Write-Host "Data kept across the update: OK"
+          Get-Process TenderPilot -ErrorAction SilentlyContinue | Stop-Process -Force
+
       - uses: actions/upload-artifact@v4
         with:
           name: TenderPilot-installers
           path: installer/*.exe
           retention-days: 30
+
+      # On main only: publish the version as a GitHub Release once. Installed copies of TenderPilot check this release
+      # (Settings & audit > Software update) and download the installer with its checksum.
+      - name: Publish release (main branch, new version only)
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ver = (Select-String -Path backend\app\version.py -Pattern 'APP_VERSION = "([\d.]+)"').Matches[0].Groups[1].Value
+          $tag = "v$ver"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) { Write-Host "Release $tag already published; raise APP_VERSION to publish an update."; exit 0 }
+          Get-ChildItem installer\*.exe | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            Set-Content -Path "$($_.FullName).sha256" -Value "$h  $($_.Name)" -NoNewline -Encoding ascii
+          }
+          $log = Get-Content CHANGELOG.md -Raw -Encoding utf8
+          $m = [regex]::Match($log, "(?ms)^## $([regex]::Escape($ver))\s*\r?\n(.*?)(?=^## |\z)")
+          $notes = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "TenderPilot $ver" }
+          Set-Content -Path release-notes.md -Value $notes -Encoding utf8
+          gh release create $tag (Get-ChildItem installer\*.exe, installer\*.sha256 | ForEach-Object FullName) --title "TenderPilot $ver" --notes-file release-notes.md
+          if ($LASTEXITCODE) { throw "Could not publish the release" }

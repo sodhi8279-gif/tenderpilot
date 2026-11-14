@@ -10,6 +10,24 @@ Never expose TenderPilot to the public internet without HTTPS, a reverse proxy a
 ## Windows installer
 `packaging\build.ps1` builds `installer\TenderPilot-Setup.exe` and `installer\TenderPilot-Demo-Setup.exe` (PyInstaller folder build plus Inno Setup; Tesseract and the eng/hin/osd data are bundled, LibreOffice is not). Installs go per user into `%LOCALAPPDATA%\Programs`; data goes into `%LOCALAPPDATA%\TenderPilot[-Demo]`. The app listens on 127.0.0.1:8471 (demo 8472) and moves to a free port if that one is taken by another program. `TenderPilot.exe --backup` takes a consistent backup (SQLite online backup) even while the app runs. The installers are not code-signed, so SmartScreen warns on first run.
 
+## Updating from the app
+
+Administrators see **Update available** in the menu when a newer version is published. Settings & audit > Software update shows what is
+new, downloads the installer (checked against its published SHA-256), writes a full backup zip of all data to the backups folder, then
+closes TenderPilot, installs and starts it again (about a minute). The browser page reloads by itself. If the backup cannot be written,
+nothing is installed. Installers already installed are deleted from `data\updates` at the next start.
+
+**Publishing an update (for whoever maintains the code):**
+1. Raise `APP_VERSION` in `backend/app/version.py` (and the same number in `packaging/tenderpilot.iss` and `packaging/version_info.txt`;
+   a test fails if they differ).
+2. Add a `## <version>` section to `CHANGELOG.md`: it becomes the "what's new" text in the app.
+3. Merge into `main`. GitHub Actions runs the tests, builds the installers, tests a real install-and-update on Windows, and publishes the
+   GitHub Release `v<version>` with the installers and their checksums. Installed copies see it within 12 hours (or at once with
+   "Check for updates").
+
+The update address can be changed with the `UPDATE_FEED` setting (a GitHub "latest release" API address). Installers are not code-signed
+yet; the checksum guards against a damaged download, not against a compromised GitHub account.
+
 ## Updating safely (existing data is never changed)
 
 - Before any database update (migration) runs, TenderPilot copies the database to

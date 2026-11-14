@@ -72,6 +72,12 @@ function Shell() {
   const [err, setErr] = useState<string | null>(null);
   const load = () => api<Me>("/me").then(setMe).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
+  const [newVersion, setNewVersion] = useState<string | null>(null);
+  useEffect(() => {  // administrators: quiet check (the server asks GitHub at most every 12 hours)
+    if (!me?.permissions.includes("org.admin")) return;
+    api("/update/check?force=false", { method: "POST" })
+      .then((r) => setNewVersion(r.update_available ? r.latest?.version : null)).catch(() => undefined);
+  }, [me?.user.id]); // eslint-disable-line react-hooks/exhaustive-deps
   if (err) return <div className="p-6"><ErrorBox error={err} onRetry={load} /></div>;
   if (!me) return <Loading />;
   const can = (p: string) => me.permissions.includes(p);
@@ -90,6 +96,11 @@ function Shell() {
               <span className="hidden sm:inline">{t(label)}</span>
             </NavLink>
           ))}
+          {newVersion && (
+            <NavLink to="/settings" className="mx-1 mt-2 rounded-md bg-teal px-2.5 py-1.5 text-xs font-medium text-white hover:bg-[#0b605d] md:mx-0">
+              {t("Update available")}: {newVersion}
+            </NavLink>
+          )}
           <div className="ml-auto text-xs md:mt-auto md:ml-0 md:px-2.5">
             <div className="hidden text-white md:block">{me.user.name}</div>
             <div className="hidden text-[#8fa3bd] md:block">{me.roles.map((r) => r.replace(/_/g, " ")).join(", ")}</div>

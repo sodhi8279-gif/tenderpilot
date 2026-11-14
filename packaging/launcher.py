@@ -131,28 +131,14 @@ def seed_demo_if_needed() -> None:
 
 
 def backup() -> int:
-    from app.config import BACKUP_DIR, DATA_DIR, settings
+    from app.config import DATA_DIR
+    from app.services.backup import BackupError, make_backup
 
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    out = BACKUP_DIR / f"tenderpilot-{datetime.now():%Y%m%d-%H%M%S}.zip"
-    db_path = Path(settings.database_url.replace("sqlite:///", ""))
-    if not db_path.exists():
-        print("Nothing to back up yet: TenderPilot has not been started on this computer.")
+    try:
+        out = make_backup()
+    except BackupError as exc:
+        print(exc)
         return 1
-    tmp = BACKUP_DIR / ".backup-db.tmp"
-    # SQLite online backup: a consistent copy even while TenderPilot is running.
-    src, dst = sqlite3.connect(db_path), sqlite3.connect(tmp)
-    with dst:
-        src.backup(dst)
-    src.close()
-    dst.close()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.write(tmp, "tenderpilot.db")
-        for f in DATA_DIR.rglob("*"):
-            rel = f.relative_to(DATA_DIR)
-            if f.is_file() and (rel.parts[0] == "storage" or rel.as_posix() == ".secret_key"):
-                z.write(f, rel.as_posix())
-    tmp.unlink(missing_ok=True)
     print(f"Backup written to {out}")
     print(f"Copy it to another drive. To restore: close TenderPilot, then unzip it into {DATA_DIR}")
     return 0
