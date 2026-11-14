@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { t as tr } from "../i18n";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useMe } from "../App";
@@ -24,24 +25,24 @@ export default function Portfolio() {
     <div className="mx-auto max-w-6xl">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Tenders</h1>
-          <p className="text-sm text-muted">Every bid in preparation, with the most urgent first.</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{tr("Tenders")}</h1>
+          <p className="text-sm text-muted">{tr("Every bid in preparation, with the most urgent first.")}</p>
         </div>
-        {can("tender.write") && <Link to="/tenders/new"><Button>New tender</Button></Link>}
+        {can("tender.write") && <Link to="/tenders/new"><Button>{tr("New tender")}</Button></Link>}
       </div>
       <div className="mb-3 flex flex-wrap gap-2">
-        <input aria-label="Search tenders" placeholder="Search title, tender ID or department" className={`${inputCls} max-w-sm`} value={q} onChange={(e) => setQ(e.target.value)} />
+        <input aria-label="Search tenders" placeholder={tr("Search title, tender ID or department")} className={`${inputCls} max-w-sm`} value={q} onChange={(e) => setQ(e.target.value)} />
         <select aria-label="Filter by status" className={`${inputCls} w-44`} value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="active">In preparation</option><option value="submitted">Submitted</option><option value="all">All tenders</option>
+          <option value="active">{tr("In preparation")}</option><option value="submitted">{tr("Submitted")}</option><option value="all">{tr("All tenders")}</option>
         </select>
       </div>
       <ErrorBox error={error} onRetry={reload} />
       {loading && !data ? <Loading /> : sorted.length === 0 ? (
-        <Empty>{data?.length ? "No tenders match this filter." : "No tenders yet. Create one and upload the tender volumes to begin."}</Empty>
+        <Empty>{tr(data?.length ? "No tenders match this filter." : "No tenders yet. Create one and upload the tender volumes to begin.")}</Empty>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-line bg-panel">
           <table className="datagrid">
-            <thead><tr><th>Tender</th><th>Bidder</th><th>Deadline</th><th>Open blockers</th><th>Checklist closed</th></tr></thead>
+            <thead><tr><th>{tr("Tender")}</th><th>{tr("Bidder")}</th><th>{tr("Deadline")}</th><th>{tr("Open blockers")}</th><th>{tr("Checklist closed")}</th></tr></thead>
             <tbody>
               {sorted.map((t) => {
                 const dl = daysLeft(t.deadline_at);
@@ -51,10 +52,10 @@ export default function Portfolio() {
                       <Link className="font-medium text-ink hover:underline" to={`/tenders/${t.id}`}>{t.title}</Link>
                       <div className="text-xs text-muted">{t.tender_ref || "No tender ID yet"}{t.department && `, ${t.department}`}{t.current_version > 1 && ` (amended ${t.current_version - 1}×)`}</div>
                     </td>
-                    <td>{t.bidder_name || <span className="text-gap">Not chosen</span>}</td>
+                    <td>{t.bidder_name || <span className="text-gap">{tr("Not chosen")}</span>}</td>
                     <td>
                       <div>{fmtDate(t.deadline_at)}</div>
-                      {dl !== null && <div className={`text-xs ${dl <= 3 ? "font-semibold text-fail" : "text-muted"}`}>{dl < 0 ? "Deadline passed" : `${dl} day${dl === 1 ? "" : "s"} left`}</div>}
+                      {dl !== null && <div className={`text-xs ${dl <= 3 ? "font-semibold text-fail" : "text-muted"}`}>{dl < 0 ? tr("Deadline passed") : `${dl} day${dl === 1 ? "" : "s"} left`}</div>}
                     </td>
                     <td>{t.critical_count > 0 && <span className="font-semibold text-fail">{t.critical_count} critical, </span>}<span className="text-muted">{t.blocker_count} total</span></td>
                     <td>{t.workload_percent}%</td>

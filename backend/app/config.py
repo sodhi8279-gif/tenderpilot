@@ -41,6 +41,9 @@ class Settings:
     soffice_cmd: str = field(default_factory=lambda: _env("SOFFICE_CMD", ""))
     convert_timeout_s: int = field(default_factory=lambda: int(_env("CONVERT_TIMEOUT_S", "180")))
     run_worker_in_process: bool = field(default_factory=lambda: _env("RUN_WORKER", "1") == "1")
+    # Re-read old documents automatically when the tender reader is upgraded. Off by default so an update never
+    # changes readings of existing tenders; use "Re-read with the latest reader" on a tender to do it on purpose.
+    auto_reread: bool = field(default_factory=lambda: _env("AUTO_REREAD", "0") == "1")
     low_confidence_threshold: float = 0.8
     cors_origins: str = field(default_factory=lambda: _env("CORS_ORIGINS", "http://localhost:5173"))
 

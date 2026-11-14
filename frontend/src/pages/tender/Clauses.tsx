@@ -7,8 +7,9 @@ type Anchor = { document_id: number; filename: string; page_index: number; page_
   bbox: number[] | null; doc_sha256: string; doc_version: number };
 type Version = { version_no: number; value: Record<string, unknown>; value_text: string; confidence: number; review_status: string; is_current: boolean;
   nature: string; extractor: string; review_note: string | null; amendment_document_id: number | null; tender_version: number; anchor: Anchor | null };
+type Precedence = { status: "suggested" | "ranks_missing" | "tie"; message: string; version_no?: number; document?: string; rank?: number };
 export type Req = { id: number; key: string; category: string; title: string; mandatory: boolean; has_conflict: boolean; low_confidence: boolean;
-  current: Version | null; versions: Version[] };
+  current: Version | null; versions: Version[]; precedence?: Precedence | null };
 
 const NATURE: Record<string, string> = { extracted: "Extracted fact", derived: "Derived calculation", interpretation: "Interpretation", question: "Unresolved question" };
 const CATS = ["deadline", "commercial", "financial", "experience", "qualification", "jv", "document", "envelope", "precedence", "technical"];
@@ -100,6 +101,21 @@ function Detail({ tid, r, reload }: { tid: number; r: Req; reload: () => void })
           <h3 className="text-base font-semibold">{r.title}</h3>
           <div className="mt-1 text-xs text-muted">{NATURE[v.nature]} by {v.extractor}, {Math.round(v.confidence * 100)}% confidence, tender version {v.tender_version}</div>
           {r.has_conflict && <p className="mt-2 rounded bg-[#fbeedb] px-2 py-1 text-[#6b3e00]">This requirement changed or conflicts. It blocks final readiness until a reviewer confirms which version applies.</p>}
+          {r.has_conflict && r.precedence && (
+            <div className="mt-2 rounded border border-line bg-teal-soft px-2 py-1.5 text-[#0b4f4c]">
+              <div><span className="font-medium">Order of precedence: </span>{r.precedence.message}</div>
+              {r.precedence.status === "suggested" && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                  <button className="underline" onClick={() => setVno(r.precedence!.version_no!)}>Show the governing version (v{r.precedence.version_no})</button>
+                  {can("requirements.review") && (
+                    <Button disabled={act.busy} onClick={() => act.run(() => api(`/tenders/${tid}/requirements/${r.id}/apply-precedence`, { method: "POST" }), reload)}>
+                      Apply precedence
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           {a && (
             <>
               <blockquote className="mt-3 border-l-2 border-teal pl-3 text-[0.9rem] leading-relaxed">{a.excerpt}</blockquote>

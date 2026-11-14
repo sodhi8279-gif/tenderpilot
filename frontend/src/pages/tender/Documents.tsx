@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
+import { t } from "../../i18n";
 import { api } from "../../api";
 import { useMe } from "../../App";
 import { Button, Empty, ErrorBox, inputCls, Loading, Notice, Panel, Status, useAction, useLoad } from "../../ui";
@@ -21,6 +22,7 @@ export default function Documents({ tid, onChange }: { tid: number; onChange: ()
   const jobs = useLoad<{ id: number; kind: string; status: string; filename: string; progress_done: number; progress_total: number; error: string | null; attempts: number }[]>(
     () => api(`/tenders/${tid}/jobs`), [tid]);
   const comp = useLoad<{ total_pages: number; pages: Record<string, number>; possibly_missing_volumes: string[]; note: string }>(() => api(`/tenders/${tid}/completeness`), [tid]);
+  const reread = useLoad<{ reader_version: string; outdated: { id: number; filename: string }[]; note: string }>(() => api(`/tenders/${tid}/reread`), [tid]);
   const sys = useLoad<{ ocr: { available: boolean; note: string | null }; ai: { provider: string; live: boolean; data_flow: string } }>(() => api("/system"));
   const [open, setOpen] = useState<number | null>(null);
   const [cls, setCls] = useState("unclassified");
@@ -42,7 +44,7 @@ export default function Documents({ tid, onChange }: { tid: number; onChange: ()
     }
     docs.reload(); jobs.reload();
   };
-  const refresh = () => { docs.reload(); jobs.reload(); comp.reload(); onChange(); };
+  const refresh = () => { docs.reload(); jobs.reload(); comp.reload(); reread.reload(); onChange(); };
 
   return (
     <div className="space-y-5">
@@ -52,9 +54,9 @@ export default function Documents({ tid, onChange }: { tid: number; onChange: ()
         <Panel title="Upload tender volumes">
           <ErrorBox error={act.error} />
           <div className="flex flex-wrap items-end gap-3 text-sm">
-            <label>Document type
+            <label>{t("Document type")}
               <select className={`${inputCls} mt-1 w-56`} value={cls} onChange={(e) => setCls(e.target.value)}>
-                <option value="unclassified">Detect automatically</option>
+                <option value="unclassified">{t("Detect automatically")}</option>
                 {CLASSES.map((c) => <option key={c} value={c}>{lbl(c)}</option>)}
               </select>
             </label>
@@ -65,6 +67,18 @@ export default function Documents({ tid, onChange }: { tid: number; onChange: ()
           <p className="mt-2 text-xs text-muted">Corrigenda and addenda change only the clauses they mention; earlier values are kept in history.</p>
         </Panel>
       )}
+      {reread.data && reread.data.outdated.length > 0 && (
+        <Panel title="A newer tender reader is available">
+          <p className="text-sm">{reread.data.outdated.length} document(s) in this tender were read by an older version of the reader:
+            {" "}{reread.data.outdated.map((d) => d.filename).join(", ")}. They stay exactly as they are until you choose to re-read them.</p>
+          <p className="mt-1 text-xs text-muted">{reread.data.note}</p>
+          {can("documents.write") && (
+            <Button className="mt-3" kind="secondary" disabled={act.busy}
+              onClick={() => act.run(() => api(`/tenders/${tid}/reread`, { method: "POST" }), refresh)}>{t("Re-read with the latest reader")}</Button>
+          )}
+        </Panel>
+      )}
+      {(docs.data?.length ?? 0) > 1 && <PrecedencePanel tid={tid} onChange={refresh} />}
       {comp.data && comp.data.total_pages > 0 && (
         <Panel title="Page completeness">
           <div className="flex flex-wrap gap-4 text-sm">
@@ -74,7 +88,7 @@ export default function Documents({ tid, onChange }: { tid: number; onChange: ()
           {comp.data.possibly_missing_volumes.length > 0 && <p className="mt-2 text-sm text-gap">Not seen yet: {comp.data.possibly_missing_volumes.map(lbl).join(", ")}. {comp.data.note}</p>}
         </Panel>
       )}
-      <Panel title="Document register" actions={<Button kind="secondary" onClick={refresh}>Refresh</Button>}>
+      <Panel title="Document register" actions={<Button kind="secondary" onClick={refresh}>{t("Refresh")}</Button>}>
         <ErrorBox error={docs.error} onRetry={docs.reload} />
         {docs.loading && !docs.data ? <Loading /> : !docs.data?.length ? <Empty>No documents uploaded yet.</Empty> : (
           <div className="overflow-x-auto"><table className="datagrid">
@@ -165,5 +179,62 @@ function AiReview({ tid, doc, done }: { tid: number; doc: Doc; done: () => void 
         <Button kind="secondary" onClick={() => setEst(null)}>Cancel</Button>
       </div>
     </div>
+  );
+}
+
+type PrecDoc = { id: number; filename: string; doc_class: string; is_amendment: boolean; precedence_rank: number | null; suggested_rank: number | null };
+type PrecInfo = { clause_found: boolean; source: { document: string; page: number; clause: string | null } | null; order: string[]; documents: PrecDoc[];
+  note: string; conflicts: { requirement_id: number; title: string; status: string; message?: string }[] };
+
+function PrecedencePanel({ tid, onChange }: { tid: number; onChange: () => void }) {
+  const { can } = useMe();
+  const p = useLoad<PrecInfo>(() => api(`/tenders/${tid}/precedence`), [tid]);
+  const [ranks, setRanks] = useState<Record<number, string>>({});
+  const act = useAction();
+  useEffect(() => {
+    if (p.data) setRanks(Object.fromEntries(p.data.documents.map((d) => [d.id, d.precedence_rank?.toString() ?? ""])));
+  }, [p.data]);
+  if (!p.data) return null;
+  const editable = can("requirements.review");
+  const base = p.data.documents.filter((d) => !d.is_amendment);
+  const save = async (list: [number, string][]) => {
+    for (const [id, val] of list)
+      if (!(await act.run(() => api(`/tenders/${tid}/documents/${id}/precedence`, { method: "PUT", json: { precedence_rank: val ? Number(val) : null } })))) return;
+    p.reload(); onChange();
+  };
+  const suggestions = base.filter((d) => d.suggested_rank && d.precedence_rank !== d.suggested_rank);
+  const clear = p.data.conflicts.filter((c) => c.status === "suggested");
+  return (
+    <Panel title="Order of precedence">
+      <ErrorBox error={act.error} />
+      <p className="text-sm">{p.data.note}{p.data.source && <> Read from {p.data.source.document}, page {p.data.source.page}.</>}</p>
+      {p.data.order.length > 0 && <p className="mt-1 text-xs text-muted">Clause order: {p.data.order.map(lbl).join(" → ")}</p>}
+      <div className="mt-3 overflow-x-auto"><table className="datagrid">
+        <thead><tr><th>Document</th><th>Type</th><th>Suggested</th><th>Rank (1 governs)</th></tr></thead>
+        <tbody>{base.map((d) => (
+          <tr key={d.id}>
+            <td>{d.filename}</td><td>{lbl(d.doc_class)}</td><td>{d.suggested_rank ?? "—"}</td>
+            <td>{editable ? <input aria-label={`Rank of ${d.filename}`} type="number" min={1} max={50} className={`${inputCls} w-20`}
+              value={ranks[d.id] ?? ""} onChange={(e) => setRanks({ ...ranks, [d.id]: e.target.value })} /> : d.precedence_rank ?? "—"}</td>
+          </tr>))}</tbody>
+      </table></div>
+      <p className="mt-2 text-xs text-muted">Corrigenda, addenda and pre-bid replies are not ranked: they change only the clauses they name.</p>
+      {editable && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button disabled={act.busy} onClick={() => save(base.map((d) => [d.id, ranks[d.id] ?? ""]))}>Save ranks</Button>
+          {suggestions.length > 0 && <Button kind="secondary" disabled={act.busy}
+            onClick={() => save(suggestions.map((d) => [d.id, String(d.suggested_rank)]))}>Use suggested ranks ({suggestions.length})</Button>}
+          {clear.length > 0 && <Button kind="secondary" disabled={act.busy}
+            onClick={() => act.run(() => api(`/tenders/${tid}/precedence/apply-all`, { method: "POST" }), () => { p.reload(); onChange(); })}>
+            Resolve {clear.length} conflict(s) by precedence</Button>}
+        </div>
+      )}
+      {p.data.conflicts.length > 0 && (
+        <ul className="mt-3 space-y-1 text-sm">
+          {p.data.conflicts.map((c) => <li key={c.requirement_id}><span className="font-medium">{c.title}: </span>
+            {c.status === "not_precedence" ? "amendment or single-document change: review it in the Clauses tab." : c.message}</li>)}
+        </ul>
+      )}
+    </Panel>
   );
 }

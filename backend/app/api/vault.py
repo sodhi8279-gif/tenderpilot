@@ -11,7 +11,8 @@ from sqlalchemy import select
 
 from ..audit import audit
 from ..deps import Ctx, get_ctx
-from ..models import EVIDENCE_CATEGORIES, JV, EvidenceLink, EvidenceRecord, JVMember, LegalEntity
+from ..models import EVIDENCE_CATEGORIES, JV, EvidenceDerivative, EvidenceLink, EvidenceRecord, JVMember, LegalEntity
+from ..services import scanfix
 from ..services.eligibility import norm_name
 from ..services.ingest import UnsafeFile, sniff_kind
 from ..services.money import try_D
@@ -231,6 +232,88 @@ def evidence_file(evidence_id: int, ctx: Ctx = Depends(get_ctx)):
     mt = "application/pdf" if data[:4] == b"%PDF" else "application/octet-stream"
     return Response(data, media_type=mt, headers={"Content-Disposition": f'inline; filename="evidence-{r.id}"',
                                                   "X-Content-Type-Options": "nosniff"})
+
+
+# ---------------------------------------------------------------- scan clean-up (cleaned copies; originals untouched)
+class CleanIn(BaseModel):
+    page: int = Field(default=0, ge=0)
+    rotate: int = 0
+    deskew: bool = False
+    angle: float | None = None
+    crop: list[float] | None = None
+
+
+def _scan_source(ctx: Ctx, evidence_id: int) -> tuple[EvidenceRecord, bytes, str]:
+    r = ctx.own(ctx.db.get(EvidenceRecord, evidence_id), "Evidence")
+    if not r.storage_key:
+        raise HTTPException(404, "No file")
+    data = storage.get(r.storage_key)
+    try:
+        kind = sniff_kind(data, r.filename or "")
+    except UnsafeFile as exc:
+        raise HTTPException(415, str(exc))
+    if kind not in ("pdf", "image"):
+        raise HTTPException(415, "Only scanned PDFs and images can be rotated, cropped or straightened")
+    return r, data, kind
+
+
+def _edited(data: bytes, kind: str, body: CleanIn):
+    try:
+        img = scanfix.load_page(data, kind, body.page)
+        return scanfix.apply_edits(img, rotate=body.rotate, deskew=body.deskew, crop=body.crop, angle=body.angle)
+    except scanfix.ScanFixError as exc:
+        raise HTTPException(422, str(exc))
+
+
+def _derivative_out(d: EvidenceDerivative) -> dict:
+    return to_dict(d, {"storage_key"})
+
+
+@router.get("/evidence/{evidence_id}/scan")
+def scan_info(evidence_id: int, ctx: Ctx = Depends(get_ctx)):
+    ctx.require("vault.read")
+    r, data, kind = _scan_source(ctx, evidence_id)
+    cleaned = ctx.db.scalars(select(EvidenceDerivative).where(EvidenceDerivative.evidence_id == r.id)
+                             .order_by(EvidenceDerivative.id.desc()))
+    return {"kind": kind, "pages": scanfix.page_count(data, kind), "cleaned": [_derivative_out(d) for d in cleaned],
+            "note": "Edits make a cleaned copy. The original file, its fingerprint and its verification never change."}
+
+
+@router.post("/evidence/{evidence_id}/scan/preview")
+def scan_preview(evidence_id: int, body: CleanIn, ctx: Ctx = Depends(get_ctx)):
+    """Preview of the edited page (nothing is saved)."""
+    ctx.require("vault.read")
+    _, data, kind = _scan_source(ctx, evidence_id)
+    img, done = _edited(data, kind, body)
+    return Response(scanfix.to_png(img), media_type="image/png",
+                    headers={"X-Deskew-Degrees": str(done["deskew_degrees"]), "Cache-Control": "no-store"})
+
+
+@router.post("/evidence/{evidence_id}/scan/clean")
+def scan_clean(evidence_id: int, body: CleanIn, ctx: Ctx = Depends(get_ctx)):
+    """Save the edited page as a cleaned copy (single-page PDF) beside the untouched original."""
+    ctx.require("vault.write")
+    r, data, kind = _scan_source(ctx, evidence_id)
+    img, done = _edited(data, kind, body)
+    pdf = scanfix.to_pdf(img)
+    d = EvidenceDerivative(org_id=ctx.org_id, evidence_id=r.id, page_index=body.page, params={**done, "page": body.page + 1},
+                           storage_key=storage.put(ctx.org_id, pdf, "pdf"), sha256=sha256(pdf), source_sha256=r.sha256,
+                           created_by=ctx.user.id)
+    ctx.db.add(d)
+    ctx.db.flush()
+    audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="evidence.cleaned_copy", subject_type="evidence",
+          subject_id=r.id, derivative_id=d.id, params=d.params)
+    ctx.db.commit()
+    return _derivative_out(d)
+
+
+@router.get("/evidence/cleaned/{derivative_id}/file")
+def cleaned_file(derivative_id: int, ctx: Ctx = Depends(get_ctx)):
+    ctx.require("vault.read")
+    d = ctx.own(ctx.db.get(EvidenceDerivative, derivative_id), "Cleaned copy")
+    return Response(storage.get(d.storage_key), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="evidence-{d.evidence_id}-cleaned-{d.id}.pdf"',
+                             "X-Content-Type-Options": "nosniff"})
 
 
 class AttributionIn(BaseModel):

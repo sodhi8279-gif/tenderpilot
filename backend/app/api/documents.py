@@ -11,7 +11,7 @@ from sqlalchemy import select
 from ..audit import audit
 from ..deps import Ctx, get_ctx
 from ..models import (DOC_STATUSES, DocumentTemplate, FieldMapping, GeneratedDocument, Requirement, TechnicalResponse)
-from ..services import docgen
+from ..services import docgen, pdfforms
 from ..services.ingest import UnsafeFile, sniff_kind
 from ..services.package import latest_quote
 from ..storage import sha256, storage
@@ -50,12 +50,24 @@ async def upload_template(tender_id: int, name: str = Form(...), envelope: str =
         kind = sniff_kind(data, file.filename or "")
     except UnsafeFile as exc:
         raise HTTPException(415, str(exc))
-    if kind != "docx":
-        raise HTTPException(415, "Upload the prescribed form as DOCX with {{placeholders}}. PDF AcroForm/overlay filling: "
-                                 "see roadmap; convert the form to DOCX for now.")
-    phs = docgen.find_placeholders(data)
-    tpl = DocumentTemplate(org_id=ctx.org_id, tender_id=t.id, name=name, kind="docx", storage_key=storage.put(ctx.org_id, data, "docx"),
-                           placeholders=phs, envelope=envelope, from_tender_form=from_tender_form)
+    layout = None
+    if kind == "docx":
+        phs = docgen.find_placeholders(data)
+        tkind, ext = "docx", "docx"
+    elif kind == "pdf":
+        try:
+            form = pdfforms.inspect_form(data)
+        except pdfforms.PdfFormError as exc:
+            raise HTTPException(422, str(exc))
+        if form["fields"]:
+            phs, tkind = [f["name"] for f in form["fields"]], "pdf_form"
+        else:
+            phs, tkind, layout = [], "pdf_overlay", []
+        ext = "pdf"
+    else:
+        raise HTTPException(415, "Upload the prescribed form as DOCX (with {{placeholders}}) or PDF (fillable or scanned).")
+    tpl = DocumentTemplate(org_id=ctx.org_id, tender_id=t.id, name=name, kind=tkind, storage_key=storage.put(ctx.org_id, data, ext),
+                           placeholders=phs, envelope=envelope, from_tender_form=from_tender_form, layout=layout)
     ctx.db.add(tpl)
     ctx.db.flush()
     for ph in phs:
@@ -99,6 +111,62 @@ def set_mappings(tender_id: int, template_id: int, body: list[MappingIn], ctx: C
     return mappings(tender_id, template_id, ctx)
 
 
+def _pdf_template(ctx: Ctx, tender_id: int, template_id: int) -> DocumentTemplate:
+    t = ctx.tender(tender_id)
+    tpl = ctx.own(ctx.db.get(DocumentTemplate, template_id), "Template")
+    if tpl.tender_id not in (None, t.id) or tpl.kind not in ("pdf_form", "pdf_overlay"):
+        raise HTTPException(404, "PDF form not found")
+    return tpl
+
+
+@router.get("/templates/{template_id}/pdf")
+def pdf_template_info(tender_id: int, template_id: int, ctx: Ctx = Depends(get_ctx)):
+    ctx.require("tender.read")
+    tpl = _pdf_template(ctx, tender_id, template_id)
+    info = pdfforms.inspect_form(storage.get(tpl.storage_key))
+    return {"kind": tpl.kind, "pages": info["pages"], "fields": info["fields"], "layout": tpl.layout or []}
+
+
+@router.get("/templates/{template_id}/pdf/pages/{page_index}")
+def pdf_template_page(tender_id: int, template_id: int, page_index: int, ctx: Ctx = Depends(get_ctx)):
+    ctx.require("tender.read")
+    tpl = _pdf_template(ctx, tender_id, template_id)
+    try:
+        png = pdfforms.page_png(storage.get(tpl.storage_key), page_index)
+    except pdfforms.PdfFormError as exc:
+        raise HTTPException(404, str(exc))
+    return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@router.put("/templates/{template_id}/layout")
+def set_layout(tender_id: int, template_id: int, body: list[dict], ctx: Ctx = Depends(get_ctx)):
+    """Text-box positions for a flat/scanned PDF form. New box names get a mapping row to be confirmed."""
+    ctx.require("docs.generate")
+    t = ctx.tender(tender_id)
+    tpl = _pdf_template(ctx, tender_id, template_id)
+    if tpl.kind != "pdf_overlay":
+        raise HTTPException(409, "This PDF has its own form fields; map those instead of placing boxes")
+    try:
+        boxes = pdfforms.validate_layout(body, len(pdfforms.inspect_form(storage.get(tpl.storage_key))["pages"]))
+    except pdfforms.PdfFormError as exc:
+        raise HTTPException(422, str(exc))
+    names = [b["name"] for b in boxes]
+    existing = {m.placeholder: m for m in ctx.db.scalars(select(FieldMapping).where(FieldMapping.template_id == tpl.id,
+                                                                                     FieldMapping.tender_id == t.id))}
+    for n in names:
+        if n not in existing:
+            guess = next((k for k in docgen.FIELD_CATALOG if k.split(".")[-1] == n.lower().replace(" ", "_")), None)
+            ctx.db.add(FieldMapping(template_id=tpl.id, tender_id=t.id, placeholder=n, source_path=guess, confirmed=False))
+    for n, m in existing.items():
+        if n not in names:
+            ctx.db.delete(m)
+    tpl.layout, tpl.placeholders = boxes, names
+    audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="template.layout", subject_type="template", subject_id=tpl.id,
+          tender_id=t.id, boxes=len(boxes))
+    ctx.db.commit()
+    return {"layout": boxes, "mappings": mappings(tender_id, tpl.id, ctx)}
+
+
 @router.post("/templates/{template_id}/generate")
 def generate(tender_id: int, template_id: int, ctx: Ctx = Depends(get_ctx)):
     ctx.require("docs.generate")
@@ -120,13 +188,26 @@ def generate(tender_id: int, template_id: int, ctx: Ctx = Depends(get_ctx)):
         if unconfirmed:
             raise HTTPException(409, f"Confirm field mappings first: {', '.join(unconfirmed[:8])}")
         values = {m.placeholder: (m.manual_value if m.manual_value else context.get(m.source_path or "")) for m in fms}
-        docx_bytes = docgen.fill_template(storage.get(tpl.storage_key), values, missing)
-    pdf_bytes, issues = docgen.docx_to_preview_pdf(docx_bytes, tpl.name, draft=True)
+        if tpl.kind in ("pdf_form", "pdf_overlay"):
+            if tpl.kind == "pdf_overlay" and not tpl.layout:
+                raise HTTPException(409, "Place at least one text box on the form first")
+            try:
+                if tpl.kind == "pdf_form":
+                    pdf_bytes = pdfforms.fill_acroform(storage.get(tpl.storage_key), values, missing)
+                else:
+                    pdf_bytes = pdfforms.fill_overlay(storage.get(tpl.storage_key), tpl.layout, values, missing)
+            except pdfforms.PdfFormError as exc:
+                raise HTTPException(422, str(exc))
+            docx_bytes, issues = None, ["Filled PDF form: check every value against the printed blank before signing."]
+        else:
+            docx_bytes = docgen.fill_template(storage.get(tpl.storage_key), values, missing)
+    if docx_bytes is not None:
+        pdf_bytes, issues = docgen.docx_to_preview_pdf(docx_bytes, tpl.name, draft=True)
     prev = ctx.db.scalar(select(GeneratedDocument).where(GeneratedDocument.tender_id == t.id, GeneratedDocument.template_id == tpl.id)
                          .order_by(GeneratedDocument.revision.desc()).limit(1))
     signing = tpl.builtin_key not in ("clarification_request",)
     g = GeneratedDocument(tender_id=t.id, template_id=tpl.id, name=re.sub(r"[^\w\- ]", "", tpl.name)[:120],
-                          revision=(prev.revision + 1) if prev else 1, docx_key=storage.put(ctx.org_id, docx_bytes, "docx"),
+                          revision=(prev.revision + 1) if prev else 1, docx_key=storage.put(ctx.org_id, docx_bytes, "docx") if docx_bytes is not None else None,
                           pdf_key=storage.put(ctx.org_id, pdf_bytes, "pdf"), status="draft", missing_fields=sorted(set(missing)),
                           qa_issues=issues, envelope=tpl.envelope, signing_required=signing,
                           certification_required="notary" if tpl.builtin_key == "poa_draft" else None,

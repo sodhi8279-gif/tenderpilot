@@ -35,6 +35,30 @@ Data note: the demo tender's stored "3 similar works … 3 years" rule was extra
 - Demo gains a second SYNTHETIC tender (DI pumping main) with two partner companies that qualify only together.
 - 37 tests pass (7 new); `tsc` clean; `vite build` succeeds; planner and "Bid this way" checked in the browser.
 
+## Session 4: 2026-11-14 (updates on branch `feature/updates-nov14`)
+Rule for this session: nothing may change existing data. Verified by upgrading two real pre-update databases from the
+backups (schema 0001 and 0002) with `backend/verify_upgrade.py`: every existing row and value identical.
+
+Done and tested:
+- Data safety: database copied before any update; additive-only migrations (0004 adds one table, 0005 one empty column);
+  old tenders are re-read only on request (`AUTO_REREAD=0`, button on the Documents tab).
+- Order of precedence: ranks suggested from the tender's own clause, rank editor, governing value shown on every
+  base-document conflict, applied only when a reviewer clicks (one conflict or all clear ones). Ties and unranked
+  documents are left to the reviewer.
+- Editable scenarios: own cases per trade, delay and time cost, payment cycle, retention, interest; inputs checked with clear
+  messages; remembered per tender in the browser; never change the quote.
+- Vault scans: rotate, crop, straighten (automatic deskew, Pillow only) into a cleaned PDF copy; original file, hash,
+  verification and version untouched.
+- PDF tender forms: fillable PDFs (fields mapped like DOCX placeholders) and flat/scanned PDFs (click to place text boxes);
+  output is a filled copy, missing values print as «MISSING», price fields still blocked in technical envelopes.
+- Reader-3: personnel / machinery / quantity tables continued on the next page, including a row cut by the page break.
+- Hindi screen labels with an English/हिन्दी switch.
+- Automated browser journey (`E2E=1 pytest tests/test_e2e_journey.py`), passing against the demo workspace.
+- 69 backend tests pass (41 before + 28 new); `tsc` clean; `vite build` succeeds.
+
+Not done: live AI review (needs a key from you); validation on a real scanned tender and on a real tender with split
+tables (only synthetic ones so far); the Windows installer has not been rebuilt with these changes.
+
 ## Next steps (in priority order)
 1. Automated Playwright browser test for the full journey (brief §P15). Manual check only so far.
 2. Run the OCR path against a real scanned tender (only synthetic scans so far); tune `MIN_TEXT_CHARS` and confidence.

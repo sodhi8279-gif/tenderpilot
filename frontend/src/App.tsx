@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import { lang, setLang, t } from "./i18n";
 import { BrowserRouter, Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { api, getToken, setToken } from "./api";
 import { Button, ErrorBox, Field, inputCls, Loading } from "./ui";
@@ -33,14 +34,16 @@ function Login() {
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
   return (
     <div className="flex min-h-full items-center justify-center bg-ink p-4">
+      <button type="button" className="fixed right-4 top-3 text-sm text-white underline" onClick={() => setLang(lang === "hi" ? "en" : "hi")}>
+        {lang === "hi" ? "English" : "हिन्दी"}</button>
       <form onSubmit={submit} className="w-full max-w-sm rounded-lg bg-panel p-6 shadow-sm">
         <h1 className="text-xl font-semibold">TenderPilot</h1>
-        <p className="mb-5 text-sm text-muted">{needsSetup ? "Create your organization and the first administrator account." : "Sign in to your bid workspace."}</p>
+        <p className="mb-5 text-sm text-muted">{t(needsSetup ? "Create your organization and the first administrator account." : "Sign in to your bid workspace.")}</p>
         {demo && !needsSetup && (
           <div className="mb-4 rounded-md border border-line bg-teal-soft p-3 text-sm">
-            <div className="font-medium">Demo version with made-up (SYNTHETIC) data</div>
+            <div className="font-medium">{t("Demo version with made-up (SYNTHETIC) data")}</div>
             <div className="mt-1 text-muted">Email: {demo.email}<br />Password: {demo.password}</div>
-            <button type="button" className="mt-2 text-teal underline" onClick={() => setF({ ...f, email: demo.email, password: demo.password })}>Fill in for me</button>
+            <button type="button" className="mt-2 text-teal underline" onClick={() => setF({ ...f, email: demo.email, password: demo.password })}>{t("Fill in for me")}</button>
           </div>
         )}
         <ErrorBox error={err} />
@@ -48,11 +51,11 @@ function Login() {
           {needsSetup && <Field label="Organization name"><input required className={inputCls} value={f.org_name} onChange={set("org_name")} /></Field>}
           {needsSetup && <Field label="Your name"><input required className={inputCls} value={f.name} onChange={set("name")} /></Field>}
           <Field label="Email"><input required type="email" autoComplete="username" className={inputCls} value={f.email} onChange={set("email")} /></Field>
-          <Field label="Password" hint={needsSetup ? "At least 10 characters." : undefined}>
+          <Field label="Password" hint={needsSetup ? t("At least 10 characters.") : undefined}>
             <input required type="password" minLength={needsSetup ? 10 : 1} autoComplete={needsSetup ? "new-password" : "current-password"} className={inputCls} value={f.password} onChange={set("password")} />
           </Field>
         </div>
-        <Button className="mt-5 w-full justify-center" disabled={busy}>{needsSetup ? "Create organization" : "Sign in"}</Button>
+        <Button className="mt-5 w-full justify-center" disabled={busy}>{t(needsSetup ? "Create organization" : "Sign in")}</Button>
       </form>
     </div>
   );
@@ -69,6 +72,12 @@ function Shell() {
   const [err, setErr] = useState<string | null>(null);
   const load = () => api<Me>("/me").then(setMe).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
+  const [newVersion, setNewVersion] = useState<string | null>(null);
+  useEffect(() => {  // administrators: quiet check (the server asks GitHub at most every 12 hours)
+    if (!me?.permissions.includes("org.admin")) return;
+    api("/update/check?force=false", { method: "POST" })
+      .then((r) => setNewVersion(r.update_available ? r.latest?.version : null)).catch(() => undefined);
+  }, [me?.user.id]); // eslint-disable-line react-hooks/exhaustive-deps
   if (err) return <div className="p-6"><ErrorBox error={err} onRetry={load} /></div>;
   if (!me) return <Loading />;
   const can = (p: string) => me.permissions.includes(p);
@@ -84,13 +93,20 @@ function Shell() {
             <NavLink key={to} to={to} end={to === "/"} className={({ isActive }) =>
               `flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm ${isActive ? "bg-ink-2 text-white" : "hover:bg-ink-2/60 hover:text-white"}`}>
               <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d={d} /></svg>
-              <span className="hidden sm:inline">{label}</span>
+              <span className="hidden sm:inline">{t(label)}</span>
             </NavLink>
           ))}
+          {newVersion && (
+            <NavLink to="/settings" className="mx-1 mt-2 rounded-md bg-teal px-2.5 py-1.5 text-xs font-medium text-white hover:bg-[#0b605d] md:mx-0">
+              {t("Update available")}: {newVersion}
+            </NavLink>
+          )}
           <div className="ml-auto text-xs md:mt-auto md:ml-0 md:px-2.5">
             <div className="hidden text-white md:block">{me.user.name}</div>
             <div className="hidden text-[#8fa3bd] md:block">{me.roles.map((r) => r.replace(/_/g, " ")).join(", ")}</div>
-            <button className="mt-1 underline hover:text-white" onClick={() => { setToken(null); window.location.assign("/login"); }}>Sign out</button>
+            <button className="mt-1 underline hover:text-white" onClick={() => { setToken(null); window.location.assign("/login"); }}>{t("Sign out")}</button>
+            <button className="mt-1 ml-3 block underline hover:text-white md:ml-0" lang={lang === "hi" ? "en" : "hi"}
+              onClick={() => setLang(lang === "hi" ? "en" : "hi")}>{lang === "hi" ? "English" : "हिन्दी"}</button>
           </div>
         </nav>
         <main className="min-w-0 flex-1 px-4 py-5 md:px-8 md:py-7">

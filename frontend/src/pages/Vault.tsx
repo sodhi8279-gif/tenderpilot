@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, blobUrl } from "../api";
 import { useMe } from "../App";
+import ScanEditor from "./ScanEditor";
 import { Button, Empty, ErrorBox, Field, fmtDay, inputCls, Loading, Notice, Panel, Status, Tabs, useAction, useLoad } from "../ui";
 
 type Entity = { id: number; legal_name: string; entity_type: string; registered_address: string; pan: string | null; gstin: string | null;
@@ -47,6 +48,7 @@ function Evidence() {
   const ev = useLoad<Evid[]>(() => api(`/evidence?${new URLSearchParams({ ...(filter.entity && { entity_id: filter.entity }), ...(filter.category && { category: filter.category }) })}`), [filter.entity, filter.category]);
   const [preview, setPreview] = useState<string | null>(null);
   const [replace, setReplace] = useState<Evid | null>(null);
+  const [clean, setClean] = useState<Evid | null>(null);
   const act = useAction();
   if (!ents.data || !cats.data) return <Loading />;
   if (!ents.data.length) return <Empty>Add a legal entity first; every document belongs to exactly one entity.</Empty>;
@@ -74,12 +76,14 @@ function Evidence() {
                   {r.sha256 && <Button kind="ghost" onClick={() => act.run(async () => setPreview(await blobUrl(`/evidence/${r.id}/file`)))}>View</Button>}
                   {can("vault.verify") && r.verification_state !== "verified" && r.sha256 && <Button kind="ghost" onClick={() => act.run(() => api(`/evidence/${r.id}/verify`, { json: { state: "verified" } }), ev.reload)}>Verify</Button>}
                   {can("vault.verify") && r.verification_state === "unverified" && <Button kind="ghost" onClick={() => act.run(() => api(`/evidence/${r.id}/verify`, { json: { state: "rejected" } }), ev.reload)}>Reject</Button>}
+                  {r.sha256 && /\.(pdf|png|jpe?g|tiff?)$/i.test(r.filename || "") && <Button kind="ghost" onClick={() => setClean(r)}>Clean up scan</Button>}
                   {can("vault.write") && <Button kind="ghost" onClick={() => { setReplace(r); window.scrollTo({ top: 0 }); }}>Replace</Button>}
                 </td>
               </tr>))}</tbody>
           </table></div>
         )}
       </Panel>
+      {clean && <ScanEditor key={clean.id} evidenceId={clean.id} title={clean.title} onClose={() => setClean(null)} />}
       {preview && <Panel title="Original document" actions={<Button kind="ghost" onClick={() => { URL.revokeObjectURL(preview); setPreview(null); }}>Close</Button>}>
         <iframe title="Evidence document" src={preview} className="h-[70vh] w-full rounded border border-line" /></Panel>}
     </div>

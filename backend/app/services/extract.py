@@ -13,10 +13,10 @@ from decimal import Decimal
 
 from .dates import detect_timezone, parse_date
 from .money import parse_indian_amount
-from .technical import extract_experience, extract_technical
+from .technical import _strip_marker, extract_experience, extract_technical, is_fragment, leading_rows, open_section_at_end
 
 # Bump when the reader changes: documents read by an older reader are read again on the next start.
-READER_VERSION = "reader-2"
+READER_VERSION = "reader-3"  # reader-3: personnel / machinery / quantity tables continued on the next page
 
 WORDNUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
            "ten": 10, "single": 1}
@@ -287,6 +287,56 @@ def extract_from_page(text: str, page_index: int, page_conf: float | None) -> li
 
     # Technical qualification criteria (personnel, plant & machinery, quantities, registration class, JV split)
     out.extend(extract_technical(text, flat, page_index, page_conf, _clause_for, _sentence_around, Candidate))
+    return out
+
+
+_TABLE_KEYS = ("tech.personnel.", "tech.equipment.", "tech.quantity.")
+
+
+def extract_continuations(pages: list[tuple[str, int, float | None]], base: list[Candidate]) -> list[Candidate]:
+    """Rows of a personnel / machinery / quantity table that run onto the next page.
+
+    Each page is read on its own by `extract_from_page`, so rows on the following page, below no heading, would be
+    missed. Here the heading still open at the bottom of page N is joined to the leading rows of page N+1 and read
+    again; only table rows are kept, anchored on page N+1 where they are printed. A row cut by the page break is
+    joined to its first half and replaces the partial reading. Rows equal to one already read are dropped; a different
+    row with the same post or machine name gets its own key (as on a single page)."""
+    out: list[Candidate] = []
+    keys = {c.key: c for c in base}
+    for (t1, i1, _c1), (t2, i2, c2) in zip(pages, pages[1:]):
+        if i2 != i1 + 1:
+            continue
+        open_ = open_section_at_end(t1)
+        if not open_:
+            continue
+        head, last = open_
+        rows = leading_rows(t2)
+        if not rows:
+            continue
+        joined = bool(last) and is_fragment(rows[0])
+        text = "\n".join([head] + ([last] if joined else []) + rows)
+        flat = text.replace(chr(10), " ")
+        for c in extract_technical(text, flat, i2, c2, _clause_for, _sentence_around, Candidate):
+            if not c.key.startswith(_TABLE_KEYS):
+                continue
+            c.notes.append(f"Row continues the table '{' '.join(head.split())[:80]}' from page {i1 + 1}.")
+            prior = keys.get(c.key)
+            if joined and last and " ".join(_strip_marker(last).split())[:40] in c.excerpt:
+                c.notes.append(f"The row starts at the foot of page {i1 + 1} and ends on page {i2 + 1}.")
+                if prior is not None:
+                    base.remove(prior)  # the partial first half read on page N
+                keys[c.key] = c
+                out.append(c)
+                continue
+            if prior is not None:
+                if prior.value == c.value:
+                    continue
+                n, k = 2, f"{c.key}_2"
+                while k in keys:
+                    n, k = n + 1, f"{c.key}_{n + 1}"
+                c.key = k
+            keys[c.key] = c
+            out.append(c)
     return out
 
 

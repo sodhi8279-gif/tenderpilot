@@ -270,35 +270,61 @@ def quote_snapshot(items: list[dict], rates: dict[int, str | None], places: int,
     return snap
 
 
+SCENARIO_LIMITS = {"rate_change_pct": (-100, 500), "delay_months": (0, 120), "monthly_time_cost": (0, None),
+                   "payment_cycle_days": (0, 730), "retention_pct": (0, 50), "retention_months": (0, 120),
+                   "interest_pct_pa": (0, 60)}
+
+
+def _num(case: str, field: str, value, default: str = "0") -> Decimal:
+    """Parse one scenario input with a message a person can act on."""
+    v = default if value is None or str(value).strip() == "" else value
+    n = try_D(v)
+    if n is None:
+        raise ValueError(f"{case}: '{value}' is not a number for {field.replace('_', ' ')}")
+    lo, hi = SCENARIO_LIMITS.get(field, (None, None))
+    if (lo is not None and n < lo) or (hi is not None and n > hi):
+        rng = f"{lo} to {hi}" if hi is not None else f"at least {lo}"
+        raise ValueError(f"{case}: {field.replace('_', ' ')} must be {rng} (got {value})")
+    return n
+
+
 def scenarios(base_total: Decimal, base_cost: Decimal, trade_totals: dict[str, Decimal], params: dict) -> dict:
     """Simple transparent sensitivity model. Every assumption is echoed back."""
-    rate = D(params.get("interest_pct_pa", "10")) / 100
-    out = {"assumptions": params, "base": {"price": str(base_total), "cost": str(base_cost), "margin": str(base_total - base_cost)}}
+    rate = _num("Settings", "interest_pct_pa", params.get("interest_pct_pa"), "10") / 100
+    out = {"assumptions": params, "base": {"price": str(base_total), "cost": str(base_cost), "margin": str(base_total - base_cost)},
+           "trade_costs": {k: str(q(v, 0)) for k, v in sorted(trade_totals.items())}}
     rows = []
-    for s in params.get("cases", []):
+    for i, s in enumerate(params.get("cases", [])):
+        name = str(s.get("name") or f"Case {i + 1}")[:120]
         cost = base_cost
         notes = []
         for trade, pct in (s.get("rate_change_pct") or {}).items():
-            delta = trade_totals.get(trade, ZERO) * D(pct) / 100
+            p = _num(name, "rate_change_pct", pct)
+            if not p:
+                continue
+            if trade not in trade_totals:
+                notes.append(f"{trade} {p}%: no {trade} items priced in this quote")
+                continue
+            delta = trade_totals[trade] * p / 100
             cost += delta
-            notes.append(f"{trade} {pct}% → ₹{q(delta, 0)}")
-        delay = D(s.get("delay_months", "0"))
+            notes.append(f"{trade} {p}% → ₹{q(delta, 0)}")
+        delay = _num(name, "delay_months", s.get("delay_months"))
         if delay:
-            d = delay * D(s.get("monthly_time_cost", "0"))
+            d = delay * _num(name, "monthly_time_cost", s.get("monthly_time_cost"))
             cost += d
             notes.append(f"delay {delay} months × time cost → ₹{q(d, 0)}")
-        days = D(s.get("payment_cycle_days", "0"))
+        days = _num(name, "payment_cycle_days", s.get("payment_cycle_days"))
         if days:
             wc = base_total * rate * days / 365
             cost += wc
             notes.append(f"working capital {days} days → ₹{q(wc, 0)}")
-        ret = D(s.get("retention_pct", "0"))
+        ret = _num(name, "retention_pct", s.get("retention_pct"))
         if ret:
-            rc = base_total * ret / 100 * rate * D(s.get("retention_months", "12")) / 12
+            rc = base_total * ret / 100 * rate * _num(name, "retention_months", s.get("retention_months"), "12") / 12
             cost += rc
             notes.append(f"retention {ret}% finance cost → ₹{q(rc, 0)}")
         margin = base_total - cost
-        rows.append({"name": s.get("name", "case"), "cost": str(q(cost, 0)), "margin": str(q(margin, 0)),
+        rows.append({"name": name, "cost": str(q(cost, 0)), "margin": str(q(margin, 0)),
                      "margin_pct_of_price": str(q(margin / base_total * 100, 2)) if base_total else None, "notes": notes})
     out["cases"] = rows
     return out
