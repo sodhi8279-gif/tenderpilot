@@ -81,7 +81,7 @@ const HI: Record<string, string> = {
   "Identity and registrations": "पहचान और पंजीकरण", "Signatory and contacts": "हस्ताक्षरकर्ता और संपर्क",
   "Bank account for EMD refunds": "EMD वापसी हेतु बैंक खाता", "Expired or expiring documents": "समाप्त / समाप्त होने वाले दस्तावेज़",
   "Turnover by financial year": "वित्त वर्ष अनुसार टर्नओवर",
-  "Update available": "अपडेट उपलब्ध", "Software update": "सॉफ़्टवेयर अपडेट", "Check for updates": "अपडेट जाँचें",
+  "Update available": "अपडेट उपलब्ध", "Updates": "अपडेट", "Software update": "सॉफ़्टवेयर अपडेट", "Check for updates": "अपडेट जाँचें",
   "Download update": "अपडेट डाउनलोड करें", "Generate": "बनाएँ", "Map fields": "फ़ील्ड मिलाएँ", "Place boxes": "बॉक्स लगाएँ", "Preview": "पूर्वावलोकन",
 };
 

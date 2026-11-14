@@ -195,8 +195,8 @@ export default function Settings() {
     <div className="mx-auto max-w-6xl space-y-5">
       <h1 className="text-2xl font-semibold tracking-tight">Settings and audit</h1>
       <ErrorBox error={act.error} />
-      <YourCompany />
       {admin && <SoftwareUpdate />}
+      <YourCompany />
       <SystemChecks admin={admin} />
       <AiProvider admin={admin} onChange={() => { refresh(); audit.reload(); }} />
       <Panel title={`Notifications (${notes.data?.filter((n) => !n.read).length || 0} unread)`} actions={<Button kind="secondary" onClick={() => act.run(() => api("/notifications/read", { json: {} }), () => { notes.reload(); refresh(); })}>Mark all read</Button>}>

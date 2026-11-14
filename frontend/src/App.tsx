@@ -74,6 +74,8 @@ function Shell() {
   const load = () => api<Me>("/me").then(setMe).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
   const [newVersion, setNewVersion] = useState<string | null>(null);
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => { fetch("/api/health").then((r) => r.json()).then((j) => setVersion(j.version || null)).catch(() => undefined); }, []);
   useEffect(() => {  // administrators: quiet check (the server asks GitHub at most every 12 hours)
     if (!me?.permissions.includes("org.admin")) return;
     api("/update/check?force=false", { method: "POST" })
@@ -108,6 +110,10 @@ function Shell() {
             <button className="mt-1 underline hover:text-white" onClick={() => { setToken(null); window.location.assign("/login"); }}>{t("Sign out")}</button>
             <button className="mt-1 ml-3 block underline hover:text-white md:ml-0" lang={lang === "hi" ? "en" : "hi"}
               onClick={() => setLang(lang === "hi" ? "en" : "hi")}>{lang === "hi" ? "English" : "हिन्दी"}</button>
+            <div className="mt-3 hidden border-t border-ink-2 pt-2 text-[#8fa3bd] md:block">
+              TenderPilot {version && `v${version}`}
+              {can("org.admin") && <NavLink to="/settings#software-update" className="ml-2 underline hover:text-white">{t("Updates")}</NavLink>}
+            </div>
           </div>
         </nav>
         <main className="min-w-0 flex-1 px-4 py-5 md:px-8 md:py-7">
