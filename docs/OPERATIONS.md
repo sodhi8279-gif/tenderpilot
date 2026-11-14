@@ -10,6 +10,17 @@ Never expose TenderPilot to the public internet without HTTPS, a reverse proxy a
 ## Windows installer
 `packaging\build.ps1` builds `installer\TenderPilot-Setup.exe` and `installer\TenderPilot-Demo-Setup.exe` (PyInstaller folder build plus Inno Setup; Tesseract and the eng/hin/osd data are bundled, LibreOffice is not). Installs go per user into `%LOCALAPPDATA%\Programs`; data goes into `%LOCALAPPDATA%\TenderPilot[-Demo]`. The app listens on 127.0.0.1:8471 (demo 8472) and moves to a free port if that one is taken by another program. `TenderPilot.exe --backup` takes a consistent backup (SQLite online backup) even while the app runs. The installers are not code-signed, so SmartScreen warns on first run.
 
+## Updating safely (existing data is never changed)
+
+- Before any database update (migration) runs, TenderPilot copies the database to
+  `data\backups-before-update\tenderpilot-before-<update>-<date>.db`. If the copy cannot be made, the update does not run.
+- Every update after 0003 is additive: it only adds new tables or new empty columns. Nothing is renamed, removed or rewritten.
+- To check an update against your real data before installing it, close TenderPilot and run, from `backend`:
+  `python verify_upgrade.py "%LOCALAPPDATA%\TenderPilot\data\tenderpilot.db"`
+  It upgrades a temporary copy (your file is only read) and compares every row of every existing table. "OK" means nothing changed.
+- A newer tender reader does not re-read old tenders by itself (`AUTO_REREAD=0`). The Documents tab of an old tender
+  offers "Re-read with the latest reader"; even then, reviewed values are kept and only unreviewed readings are refreshed.
+
 ## Backup and restore
 - SQLite: stop the server, run `scripts/backup.ps1`, and copy the zip off the machine. To restore, stop the server and unzip into `backend/data/`.
 - PostgreSQL: `pg_dump` the database and back up the file volume (`STORAGE_DIR`) at the same time. Files are referenced by key from the database.
