@@ -34,6 +34,9 @@ const STATUS: Record<string, [string, string]> = {
   warn: ["Check", "bg-[#fbeedb] text-gap"], done: ["Done", "bg-[#e5f2e8] text-pass"], blocked: ["Blocked", "bg-[#f9e3e1] text-fail"],
   critical: ["Critical", "bg-[#f9e3e1] text-fail"], high: ["High", "bg-[#fbeedb] text-gap"], medium: ["Medium", "bg-[#eeeff1] text-na"],
   complies: ["Complies", "bg-[#e5f2e8] text-pass"], deviation: ["Deviation", "bg-[#fbeedb] text-gap"], exclusion: ["Exclusion", "bg-[#f9e3e1] text-fail"],
+  qualifies: ["Qualifies", "bg-[#e5f2e8] text-pass"], qualifies_subject_to_confirmation: ["Qualifies, confirm rules", "bg-[#e5f2e8] text-pass"],
+  gaps_to_close: ["Gaps to close", "bg-[#fbeedb] text-gap"], does_not_qualify: ["Does not qualify", "bg-[#f9e3e1] text-fail"],
+  confirmed: ["Confirmed", "bg-[#e5f2e8] text-pass"], suggested: ["From JV clause", "bg-teal-soft text-teal"], assumed: ["Assumed", "bg-[#fbeedb] text-gap"],
 };
 
 /** Status always carries its text; colour is secondary. */

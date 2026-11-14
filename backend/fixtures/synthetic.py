@@ -119,6 +119,206 @@ def nit_pdf() -> bytes:
     return buf.getvalue()
 
 
+# A second SYNTHETIC tender with technical qualification criteria and a JV sharing clause.
+TECH_NIT_PAGES = [
+    [
+        "Demo City Water Supply Board (SYNTHETIC)",
+        "NOTICE INVITING TENDER  NIT No. DCWSB/SYN/2026/044",
+        "1. Name of work: Laying of 600 mm DI pumping main and construction of pump house at Demo City.",
+        "2. Estimated cost put to tender: Rs. 24.00 Crore",
+        "3. Earnest Money Deposit (EMD): Rs. 24,00,000 by online payment.",
+        "4. Period of completion: 24 months.",
+        "5. Last date and time for submission of bids: {deadline} at 15:00 hrs IST",
+        "6. Date of opening of technical bids: {opening} at 15:30 hrs IST",
+        "7. The tender follows a two bid system (technical and financial envelopes).",
+    ],
+    [
+        "8. QUALIFICATION CRITERIA",
+        "8.1 Average annual financial turnover during the last 3 financial years should be at least",
+        "Rs. 12 Crore, as certified by a Chartered Accountant.",
+        "8.2 The bidder should have satisfactorily completed during the last seven years two similar",
+        "completed works each costing not less than 50% of the estimated cost. Similar work means laying",
+        "of DI or MS pumping main of 300 mm dia and above.",
+        "8.3 Net worth of the bidder should be positive.",
+        "8.4 The bidder should be registered with CPWD in Class I or above.",
+        "8.5 Physical performance: The bidder should have executed in any one financial year",
+        "during the last five years the following minimum quantities:",
+        "(a) Laying of DI pipes of 300 mm dia and above: 15 km",
+        "(b) Earthwork in excavation: 50,000 cum",
+        "(c) RCC: 3,000 cum",
+        "8.6 Key personnel: The bidder shall deploy the following key personnel:",
+        "(i) Project Manager - B.E./B.Tech (Civil) with 12 years experience - 1 No.",
+        "(ii) Site Engineer - B.E. (Civil) or Diploma (Civil) with 5 years experience - 2 Nos.",
+        "(iii) Mechanical Engineer - B.E. (Mechanical) with 5 years experience - 1 No.",
+        "8.7 Key plant and machinery: The bidder should own or have on lease the following:",
+        "(i) Hydraulic excavator - 2 Nos.",
+        "(ii) Crane of capacity 10 MT - 1 No.",
+        "(iii) Hydrostatic test pump - 1 No.",
+        "(iv) DG set 125 kVA - 1 No.",
+        "8.8 Qualification shall be assessed as on the last date of submission of bids.",
+    ],
+    [
+        "9. JOINT VENTURE",
+        "9.1 Joint venture is permitted with not more than two members.",
+        "9.2 The lead member shall have a share of not less than 51% in the joint venture.",
+        "9.3 The JV members shall jointly meet the qualification criteria. The lead member shall meet",
+        "at least 60% of the financial and physical qualification criteria and each other member shall",
+        "meet at least 30%. The similar work criterion shall be met by the lead member alone.",
+        "9.4 Each member shall have positive net worth.",
+        "10. DOCUMENTS TO BE UPLOADED",
+        "10.1 Copy of PAN card of the bidder.",
+        "10.2 Power of attorney in favour of the person signing the bid.",
+    ],
+]
+
+
+# SYNTHETIC records for two fictional companies that qualify for TECH_NIT only when they bid together:
+# Alpha has the finance, similar works and most quantities; Beta has the mechanical staff and equipment.
+TECH_PARTNERS = {
+    "alpha": {"legal_name": "Alpha Pipelines Private Limited (SYNTHETIC)", "records": [
+        ("turnover_certificate", "CA turnover FY 2025-26", {"fy": "2025-26", "turnover": "100000000"}, None),
+        ("turnover_certificate", "CA turnover FY 2024-25", {"fy": "2024-25", "turnover": "100000000"}, None),
+        ("turnover_certificate", "CA turnover FY 2023-24", {"fy": "2023-24", "turnover": "100000000"}, None),
+        ("completion_certificate", "Completion: 500 mm DI main, Demo North", {"work_name": "500 mm DI main, Demo North",
+         "executed_value": "130000000", "completion_date": "2024-06-30", "status": "completed", "is_similar": True}, None),
+        ("completion_certificate", "Completion: 400 mm MS main, Demo East", {"work_name": "400 mm MS main, Demo East",
+         "executed_value": "125000000", "completion_date": "2023-02-15", "status": "completed", "is_similar": True}, None),
+        ("net_worth", "CA net worth certificate", {"net_worth": "60000000", "as_of": "2026-03-31"}, None),
+        ("registration", "CPWD registration Class I", {"authority": "CPWD", "class": "I"}, "2028-03-31"),
+        ("pan", "PAN card", {}, None),
+        ("power_of_attorney", "Power of attorney", {}, None),
+        ("executed_quantity", "DI pipe laid FY 2024-25", {"work_name": "500 mm DI main, Demo North", "item": "Laying DI pipes",
+         "quantity": "10", "unit": "km", "fy": "2024-25", "dia_mm": "500", "material": "DI"}, None),
+        ("executed_quantity", "Earthwork FY 2024-25", {"work_name": "500 mm DI main, Demo North", "item": "Earthwork in excavation",
+         "quantity": "40000", "unit": "cum", "fy": "2024-25"}, None),
+        ("executed_quantity", "RCC FY 2024-25", {"work_name": "Pump house, Demo North", "item": "RCC", "quantity": "2000",
+         "unit": "cum", "fy": "2024-25"}, None),
+        ("personnel", "CV: R. Menon (SYNTHETIC)", {"person_name": "R. Menon (SYNTHETIC)", "qualification": "B.E. Civil",
+         "experience_years": "15"}, None),
+        ("personnel", "CV: S. Das (SYNTHETIC)", {"person_name": "S. Das (SYNTHETIC)", "qualification": "Diploma in Civil Engineering",
+         "experience_years": "6"}, None),
+        ("machinery", "Excavator invoice", {"equipment_type": "Hydraulic excavator", "quantity": "1", "ownership": "owned"}, None),
+        ("machinery", "Crane RC book", {"equipment_type": "Hydra crane", "quantity": "1", "capacity": "12", "capacity_unit": "MT",
+         "ownership": "owned"}, None),
+    ]},
+    "beta": {"legal_name": "Beta Mech Works LLP (SYNTHETIC)", "records": [
+        ("turnover_certificate", "CA turnover FY 2025-26", {"fy": "2025-26", "turnover": "40000000"}, None),
+        ("turnover_certificate", "CA turnover FY 2024-25", {"fy": "2024-25", "turnover": "40000000"}, None),
+        ("turnover_certificate", "CA turnover FY 2023-24", {"fy": "2023-24", "turnover": "40000000"}, None),
+        ("net_worth", "CA net worth certificate", {"net_worth": "15000000", "as_of": "2026-03-31"}, None),
+        ("registration", "CPWD registration Class I", {"authority": "CPWD", "class": "I"}, "2027-12-31"),
+        ("pan", "PAN card", {}, None),
+        ("power_of_attorney", "Power of attorney", {}, None),
+        ("executed_quantity", "DI pipe laid FY 2024-25", {"work_name": "300 mm DI rising main", "item": "DI pipe laying",
+         "quantity": "6", "unit": "km", "fy": "2024-25", "dia_mm": "300", "material": "DI"}, None),
+        ("executed_quantity", "Earthwork FY 2024-25", {"work_name": "300 mm DI rising main", "item": "Earth work excavation",
+         "quantity": "15000", "unit": "cum", "fy": "2024-25"}, None),
+        ("executed_quantity", "RCC FY 2024-25", {"work_name": "Sump, Demo West", "item": "R.C.C. work", "quantity": "1200",
+         "unit": "cum", "fy": "2024-25"}, None),
+        ("personnel", "CV: K. Iyer (SYNTHETIC)", {"person_name": "K. Iyer (SYNTHETIC)", "qualification": "B.Tech Civil",
+         "experience_years": "8"}, None),
+        ("personnel", "CV: M. Khan (SYNTHETIC)", {"person_name": "M. Khan (SYNTHETIC)", "qualification": "B.E. Mechanical",
+         "experience_years": "7"}, None),
+        ("machinery", "Excavator invoice", {"equipment_type": "Excavator (Poclain)", "quantity": "1", "ownership": "owned"}, None),
+        ("machinery", "Hydro test pump invoice", {"equipment_type": "Hydrostatic test pump", "quantity": "1", "ownership": "owned"}, None),
+        ("machinery", "DG set hire agreement", {"equipment_type": "DG set", "quantity": "1", "capacity": "125", "capacity_unit": "kVA",
+         "ownership": "leased"}, "2027-06-30"),
+    ]},
+}
+
+
+def technical_nit_pdf() -> bytes:
+    """3 text pages: financial, similar work, registration class, physical quantities, personnel, machinery, JV split."""
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    for i, page in enumerate(TECH_NIT_PAGES):
+        _text_page(c, _fmt(page), f"Page {i + 1}")
+    c.save()
+    return buf.getvalue()
+
+
+# Layout of a typical state-PSU slope-protection NIT: estimate and class in a table whose cells wrap, criteria under
+# "TECHNICAL CRITERIA" with A) General / B) Specific experience / C) Plant, Machinery & Equipment, bullets printed on
+# their own line, sizes wrapped onto the next line, the JV notes split over pages, and manpower in running text.
+EXP_NIT_PAGES = [
+    [
+        "Hill Power Development Corporation, Demo Valley (SYNTHETIC)",
+        "e-NIT No. HPDC/SYN/2026/031",
+        # table cells come out of the PDF one cell (and one wrapped cell line) at a time
+        "Description of", "Work", "Estimated", "cost of", "work", "Cost of Bid", "Document", "(INR)",
+        "Comple", "tion", "Period", "(Mont", "hs)", "Class", "of", "Contr", "actor",
+        "Repair of slopes", "near adit portal", "(SYNTHETIC)", "6.7956", "Crore", "5000/-", "06", "month",
+        "Class", "A and", "above",
+        "Last date and time for submission of bids: {deadline} at 15:00 hrs IST",
+    ],
+    [
+        "1.5. The Applicant shall be a single entity / sole bidder or a Joint venture duly constituted with",
+        "maximum 2 partners.",
+        "1.6. TECHNICAL CRITERIA:",
+        "A) General Experience",
+        "The bidder/applicant, as a Sole Contractor or as a member of a Joint Venture, should have",
+        "experience of executing construction of retaining wall of height not less than 7.5 m and length not",
+        "less than 10 m during the preceding ten (10) years (reckoned from one month prior to the date of",
+        "issue of NIT), of value as under:",
+        "•",
+        "One completed or ongoing project having executed value not less than 80% of the advertised",
+        "cost of work",
+        "or",
+        "•",
+        "Two completed or ongoing projects each having executed value not less than 50% of the",
+        "advertised cost of work",
+        "or",
+        "•",
+        "Three completed or ongoing projects each having executed value not less than 40% of the",
+        "advertised cost of work",
+    ],
+    [
+        "The experience claim should be substantiated by completion certificate/ Allotment Order.",
+        "In case of Joint Venture (JV):",
+        "•",
+        "Experience of all JV partners shall be aggregated to assess compliance with the above criteria.",
+        "B) Specific Experience",
+        "The bidder, either individually or through participation in a Joint Venture, must demonstrate the",
+        "following successful experience within the preceding ten (10) years:",
+        "•",
+        "Construction of RCC/PCC slope protection works with anchor bolts of height not less than",
+        "5 m and length not less than 20 m.",
+        "In case of Joint Venture (JV):",
+        "•",
+        "The specific experience may be furnished by any one partner,",
+        "C) Plant, Machinery & Equipment",
+        "The bidder (individual or JV) must own or have assured access (through lease/loan agreements) to the",
+        "following key equipment:",
+        "i. Concrete Batching Plant of required capacity",
+        "ii. Transit Mixers and Concrete Pumps capable of placing concrete in confined spaces",
+        "iii. Drilling Rigs (minimum 45 mm dia.) for anchoring works",
+        "iv. Epoxy Injection / Grouting Equipment",
+        "In case of Joint Venture (JV):",
+        "•",
+        "The required equipment may be owned or arranged collectively by the JV partners.",
+    ],
+    [
+        "8. Affidavit Regarding Manpower: The bidder shall submit an affidavit confirming the availability of",
+        "adequate qualified technical staff, skilled workers and other manpower required for execution of",
+        "the work. The bidder should confirm and share details regarding availabity of atleast 01 no. Civil",
+        "Engineer with minimum 05 years of work experience, 01 no. Safety Officer, on its regular payroll.",
+        "2.2. II. The Lead Partner shall hold a minimum stake of 51% in the Joint Venture (JV) and shall",
+        "individually meet at least 50% of the Technical Qualification Criteria specified under Clause 1.6(B)",
+        "4. Foreign bidders, joint ventures with foreign partners, or consortiums involving foreign entities",
+        "are not permitted.",
+    ],
+]
+
+
+def experience_nit_pdf() -> bytes:
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    for i, page in enumerate(EXP_NIT_PAGES):
+        _text_page(c, _fmt(page), f"Page {i + 1}")
+    c.save()
+    return buf.getvalue()
+
+
 def corrigendum_pdf() -> bytes:
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)

@@ -1,0 +1,17 @@
+TenderPilot Demo is installed.
+
+This is a practice copy filled with made-up (SYNTHETIC) data: a sample company, certificates and one tender.
+Use it to learn TenderPilot or to show it to others. Do not put real tender documents in it.
+
+HOW TO START
+Open the Start menu and click "TenderPilot Demo". A small black window opens and your browser shows the demo.
+The first start takes about a minute while the sample data is created.
+Keep that window open while you use it. Close it to stop the demo.
+
+SIGN IN
+The sign-in page shows the demo email and password, with a "Fill in for me" button.
+
+Demo data is kept in %LOCALAPPDATA%\TenderPilot-Demo. To start the demo fresh, close it, delete that folder,
+and start it again.
+
+For real tenders, install TenderPilot-Setup.exe. It keeps real data separate from the demo.

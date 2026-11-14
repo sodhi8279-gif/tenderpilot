@@ -106,7 +106,15 @@ function Detail({ tid, r, reload }: { tid: number; r: Req; reload: () => void })
               <div className="mt-2 text-xs text-muted">{a.filename}, page {a.page_index + 1}{a.page_label && ` (printed ${a.page_label})`}, clause {a.clause_no || "not numbered"}. Document v{a.doc_version}, SHA-256 {a.doc_sha256.slice(0, 12)}…</div>
             </>
           )}
-          <div className="mt-3"><span className="font-medium">Value: </span>{valueText(v.value) || "—"}</div>
+          {v.extractor.startsWith("ai:") ? (
+            <div className="mt-3 rounded-md border border-[#d9c49a] bg-[#fbf5e8] p-3">
+              <div className="text-xs font-semibold text-[#6b3e00]">AI interpretation ({v.extractor.slice(3)}). Not a verified fact: check it against the highlighted clause, then approve or reject.</div>
+              {String(v.value.value_text || "") && <div className="mt-2"><span className="font-medium">Stated value: </span>{String(v.value.value_text)}</div>}
+              <p className="mt-2 leading-relaxed">{String(v.value.interpretation || "No interpretation given.")}</p>
+              {String(v.value.ambiguity || "") && <p className="mt-2 text-[#6b3e00]"><span className="font-medium">Possible ambiguity: </span>{String(v.value.ambiguity)}</p>}
+              <p className="mt-2 text-xs text-muted">AI items never set eligibility thresholds, dates or amounts. Those come only from rule-based extraction and reviewer-confirmed values.</p>
+            </div>
+          ) : <div className="mt-3"><span className="font-medium">Value: </span>{valueText(v.value) || "—"}</div>}
           {v.review_note && <div className="mt-2 text-xs text-gap">{v.review_note}</div>}
         </div>
 

@@ -23,7 +23,7 @@ from app.main import app  # noqa: E402
 from app.models import Membership, Organization, User  # noqa: E402
 from app.security import create_token, hash_password  # noqa: E402
 from app.services import jobs  # noqa: E402
-from fixtures.synthetic import DEADLINE, boq_xlsx, nit_pdf, simple_pdf  # noqa: E402
+from fixtures.synthetic import DEADLINE, TECH_PARTNERS, boq_xlsx, nit_pdf, simple_pdf, technical_nit_pdf  # noqa: E402
 
 ROLES = ["org_admin", "tender_manager", "technical_reviewer", "estimator", "document_coordinator",
          "finance_reviewer", "authorized_approver", "auditor"]
@@ -87,6 +87,30 @@ def main() -> None:
             "row_version": tv["row_version"], "qualification_cutoff": DEADLINE.isoformat(),
             "qualification_cutoff_source": "Clause 10.5: as on the last date of submission of bids"}).raise_for_status()
         post(f"/api/v1/tenders/{t['id']}/boqs", files={"file": ("BOQ_DWW_SYN_2026_017.xlsx", boq_xlsx())})
+
+        # Second tender: technical criteria (personnel, machinery, quantities) that only a JV of two fictional
+        # companies can meet. Shows the "How to qualify" planner.
+        partner_ids = {}
+        for key, spec in TECH_PARTNERS.items():
+            pe = post("/api/v1/entities", json={"legal_name": spec["legal_name"], "registered_address": "Demo Industrial Area",
+                                                "signatory_name": "B. Singh", "signatory_designation": "Partner"})
+            partner_ids[key] = pe["id"]
+            for cat, title, fields, expiry in spec["records"]:
+                data = {"legal_entity_id": str(pe["id"]), "category": cat, "title": title, "fields": json.dumps(fields),
+                        "issuer": "Synthetic issuer"}
+                if expiry:
+                    data["expiry_date"] = expiry
+                rec = post("/api/v1/evidence", files={"file": (f"{cat}.pdf", simple_pdf(title, [json.dumps(fields)]))}, data=data)
+                post(f"/api/v1/evidence/{rec['id']}/verify", json={"state": "verified"})
+        t2 = post("/api/v1/tenders", json={"title": "600 mm DI pumping main and pump house, Demo City (SYNTHETIC)",
+                                           "tender_ref": "DCWSB/SYN/2026/044", "department": "Demo City Water Supply Board",
+                                           "bidder_entity_id": partner_ids["alpha"]})
+        post(f"/api/v1/tenders/{t2['id']}/documents", files={"file": ("NIT_DCWSB_SYN_2026_044.pdf", technical_nit_pdf())})
+        jobs.run_pending()
+        tv = client.get(f"/api/v1/tenders/{t2['id']}", headers=h).json()
+        client.patch(f"/api/v1/tenders/{t2['id']}", headers=h, json={
+            "row_version": tv["row_version"], "qualification_cutoff": DEADLINE.isoformat(),
+            "qualification_cutoff_source": "Clause 8.8: as on the last date of submission of bids"}).raise_for_status()
     print("Demo workspace created (SYNTHETIC data).")
     print(f"Password for every demo user: {password}")
     for role in ROLES:

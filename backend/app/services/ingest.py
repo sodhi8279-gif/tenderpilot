@@ -114,47 +114,83 @@ class TesseractAdapter(OcrAdapter):
             default = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
             if default.exists():
                 self.cmd = str(default)
+        self._lang_cache: str | None = None
 
     def available(self) -> bool:
-        return bool(self.cmd)
+        if not self.cmd:
+            return False
+        return Path(self.cmd).exists() if Path(self.cmd).is_absolute() else True
+
+    def _base_args(self) -> list[str]:
+        return [self.cmd] + (["--tessdata-dir", settings.tessdata_dir] if settings.tessdata_dir else [])
+
+    def version(self) -> str | None:
+        try:
+            out = subprocess.run([self.cmd, "--version"], capture_output=True, text=True, timeout=20)
+            first = (out.stdout or out.stderr).strip().splitlines()
+            return first[0] if first else None
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    def languages(self) -> list[str]:
+        try:
+            out = subprocess.run(self._base_args() + ["--list-langs"], capture_output=True, text=True, timeout=20).stdout
+            return sorted(ln.strip() for ln in out.splitlines()[1:] if ln.strip())
+        except (OSError, subprocess.SubprocessError):
+            return []
 
     def _langs(self) -> str:
-        try:
-            out = subprocess.run([self.cmd, "--list-langs"], capture_output=True, text=True, timeout=20).stdout
-            have = {ln.strip() for ln in out.splitlines()[1:]}
+        if self._lang_cache is None:
+            have = set(self.languages())
             wanted = [lang for lang in settings.ocr_languages.split("+") if lang in have]
-            return "+".join(wanted) or "eng"
-        except (OSError, subprocess.SubprocessError):
-            return "eng"
+            self._lang_cache = "+".join(wanted) or "eng"
+        return self._lang_cache
 
-    def ocr_png(self, png: bytes) -> OcrResult:
+    def ocr_png(self, png: bytes, langs: str | None = None) -> OcrResult:
         with tempfile.TemporaryDirectory() as td:
             img = Path(td) / "page.png"
             img.write_bytes(png)
-            proc = subprocess.run([self.cmd, str(img), "stdout", "-l", self._langs(), "tsv"],
+            proc = subprocess.run(self._base_args() + [str(img), "stdout", "-l", langs or self._langs(),
+                                                       "-c", "tessedit_create_tsv=1", "-c", "tessedit_create_txt=0"],
                                   capture_output=True, text=True, timeout=180, encoding="utf-8", errors="replace")
             if proc.returncode != 0:
-                raise RuntimeError("Tesseract failed")
-        words, confs = [], []
-        rows = list(csv.reader(io.StringIO(proc.stdout), delimiter="\t"))
-        line_key = None
-        for r in rows[1:]:
+                raise RuntimeError("Tesseract failed: " + (proc.stderr or "").strip()[:200])
+        return self.parse_tsv(proc.stdout)
+
+    @staticmethod
+    def parse_tsv(tsv: str) -> OcrResult:
+        """Join words into lines, dropping scan specks.
+
+        Removed only: (a) tokens with no letter or digit (~ | _ — ...) below 60 confidence, and (b) short
+        low-confidence Devanagari fragments inside lines that are otherwise Latin script (speckle misread
+        as Hindi). Confidence alone is NOT used: Tesseract sometimes scores real words such as "80%" at 0.
+        """
+        lines: dict[tuple, list[tuple[str, float]]] = {}
+        for r in list(csv.reader(io.StringIO(tsv), delimiter="\t", quoting=csv.QUOTE_NONE))[1:]:
             if len(r) < 12 or not r[11].strip():
                 continue
-            key = (r[2], r[3], r[4])
-            if line_key is not None and key != line_key:
-                words.append("\n")
-            line_key = key
-            words.append(r[11])
             try:
                 c = float(r[10])
+            except ValueError:
+                c = -1.0
+            lines.setdefault((r[1], r[2], r[3], r[4]), []).append((r[11], c))
+        out_lines, confs = [], []
+        for words in lines.values():
+            latin = sum(1 for w, _ in words if any("a" <= ch.lower() <= "z" for ch in w))
+            deva = sum(1 for w, _ in words if any("ऀ" <= ch <= "ॿ" for ch in w))
+            kept = []
+            for w, c in words:
+                if not any(ch.isalnum() for ch in w) and c < 60:
+                    continue
+                if latin > 2 * deva and any("ऀ" <= ch <= "ॿ" for ch in w) and len(w) <= 3 and c < 50:
+                    continue
+                kept.append(w)
                 if c >= 0:
                     confs.append(c)
-            except ValueError:
-                pass
-        text = " ".join(words).replace(" \n ", "\n")
+            if kept:
+                out_lines.append(" ".join(kept))
         conf = (sum(confs) / len(confs) / 100.0) if confs else 0.0
-        return OcrResult(text=text, confidence=round(conf, 3))
+        return OcrResult(text="\n".join(out_lines), confidence=round(conf, 3))
 
 
 def get_ocr() -> OcrAdapter:

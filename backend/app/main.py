@@ -1,17 +1,20 @@
 """TenderPilot API entrypoint: `uvicorn app.main:app` from the backend/ folder."""
 from __future__ import annotations
 
+import os
+
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import auth, documents, eligibility, estimating, packaging, tenders, vault
-from .config import BASE_DIR, settings
+from .api import auth, documents, eligibility, estimating, packaging, system, tenders, vault
+from .config import FRONTEND_DIST, settings
 from .migrations import migrate
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -23,6 +26,15 @@ _worker = None
 async def lifespan(_app: FastAPI):
     global _worker
     migrate()
+    try:  # documents read by an older reader are read again (reviewed values are kept)
+        from .db import SessionLocal
+        from .services.jobs import requeue_outdated_extractions
+        with SessionLocal() as db:
+            n = requeue_outdated_extractions(db)
+        if n:
+            log.info("Queued %d document(s) to be re-read by the updated tender reader", n)
+    except Exception:  # noqa: BLE001  never block start-up
+        log.exception("Could not queue documents for re-reading")
     if settings.run_worker_in_process:
         from .services.jobs import Worker
         _worker = Worker()
@@ -48,6 +60,13 @@ async def security_headers(request: Request, call_next):
     return resp
 
 
+@app.exception_handler(RequestValidationError)
+async def invalid_request(_request: Request, exc: RequestValidationError):
+    # FastAPI's default 422 echoes the submitted value ("input"): drop it so passwords and API keys are never reflected.
+    errors = [{k: v for k, v in e.items() if k not in ("input", "ctx", "url")} for e in exc.errors()]
+    return JSONResponse({"detail": errors}, status_code=422)
+
+
 @app.exception_handler(Exception)
 async def unhandled(_request: Request, exc: Exception):
     # Never echo document text or secrets; log type only.
@@ -55,16 +74,16 @@ async def unhandled(_request: Request, exc: Exception):
     return JSONResponse({"detail": "Internal error. The action was not completed; please retry."}, status_code=500)
 
 
-for r in (auth.router, vault.router, tenders.router, eligibility.router, documents.router, estimating.router, packaging.router):
+for r in (system.router, auth.router, vault.router, tenders.router, eligibility.router, documents.router, estimating.router, packaging.router):
     app.include_router(r)
 
 
 @app.get("/api/health")
 def health():
-    return {"ok": True}
+    return {"ok": True, "app": "TenderPilot", "demo": os.environ.get("DEMO_MODE") == "1"}
 
 
-DIST = BASE_DIR.parent / "frontend" / "dist"
+DIST = FRONTEND_DIST
 if DIST.exists():
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 

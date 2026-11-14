@@ -21,6 +21,16 @@ def current_version(req: Requirement) -> RequirementVersion | None:
     return None
 
 
+# Keys holding the text exactly as printed (or as OCR read it). They are kept for display but are not part of
+# the value: "Rs..12,50,000" from a scan and "Rs. 12,50,000" from a Word file are the same EMD, not a conflict.
+_PRESENTATION_KEYS = frozenset({"original"})
+
+
+def same_value(a: dict | None, b: dict | None) -> bool:
+    strip = lambda v: {k: x for k, x in (v or {}).items() if k not in _PRESENTATION_KEYS}
+    return strip(a) == strip(b)
+
+
 def _anchor(db: Session, doc: SourceDocument, c: Candidate, bbox, page_label) -> SourceAnchor:
     a = SourceAnchor(document_id=doc.id, doc_sha256=doc.sha256, doc_version=doc.version, page_index=c.page_index,
                      page_label=page_label, clause_no=c.clause_no, excerpt=c.excerpt[:600], bbox=bbox)
@@ -29,10 +39,18 @@ def _anchor(db: Session, doc: SourceDocument, c: Candidate, bbox, page_label) ->
     return a
 
 
+def _machine_read(v: RequirementVersion) -> bool:
+    return not str(v.extractor or "").startswith(("manual", "ai"))
+
+
 def apply_candidates(db: Session, tender: Tender, doc: SourceDocument, cands: list[Candidate],
-                     bboxes: dict[int, list | None], labels: dict[int, str | None]) -> dict:
-    """Idempotently upsert requirements from one document's candidates."""
-    created, amended, unchanged, conflicts = 0, 0, 0, 0
+                     bboxes: dict[int, list | None], labels: dict[int, str | None], reread: bool = False) -> dict:
+    """Idempotently upsert requirements from one document's candidates.
+
+    `reread`: the same document is being read again by an improved reader. An unreviewed machine reading from this
+    document is replaced; a value a person reviewed is kept and the new reading is offered beside it for comparison;
+    unreviewed readings the new reader no longer finds are withdrawn. Nothing a person entered is overwritten."""
+    created, amended, unchanged, conflicts, reread_updated, reread_offered, withdrawn = 0, 0, 0, 0, 0, 0, 0
     changed_req_ids: list[int] = []
     for i, c in enumerate(cands):
         req = db.scalar(select(Requirement).where(Requirement.tender_id == tender.id, Requirement.key == c.key))
@@ -43,29 +61,50 @@ def apply_candidates(db: Session, tender: Tender, doc: SourceDocument, cands: li
             a = _anchor(db, doc, c, bboxes.get(i), labels.get(c.page_index))
             db.add(RequirementVersion(requirement_id=req.id, version_no=1, tender_version=doc.effective_tender_version,
                                       nature=c.nature, value=c.value, value_text=c.excerpt, anchor_id=a.id,
-                                      confidence=c.confidence, review_status="unreviewed", is_current=True,
+                                      confidence=c.confidence, extractor=c.extractor, review_status="unreviewed", is_current=True,
                                       review_note="; ".join(c.notes) or None,
                                       amendment_document_id=doc.id if doc.is_amendment else None))
             created += 1
             continue
         db.refresh(req)
         # Idempotency: same document already contributed this exact value
-        if any(v.anchor and v.anchor.document_id == doc.id and v.value == c.value for v in req.versions):
+        if any(v.anchor and v.anchor.document_id == doc.id and same_value(v.value, c.value) for v in req.versions):
             unchanged += 1
             continue
         cur = current_version(req)
-        if cur is not None and cur.value == c.value:
+        if cur is not None and same_value(cur.value, c.value):
             unchanged += 1
             continue
         a = _anchor(db, doc, c, bboxes.get(i), labels.get(c.page_index))
         next_no = max(v.version_no for v in req.versions) + 1
+        if reread and not doc.is_amendment and cur is not None and cur.anchor and cur.anchor.document_id == doc.id:
+            if cur.review_status == "unreviewed" and _machine_read(cur):
+                cur.is_current = False
+                db.add(RequirementVersion(requirement_id=req.id, version_no=next_no, tender_version=cur.tender_version,
+                                          nature=c.nature, value=c.value, value_text=c.excerpt, anchor_id=a.id,
+                                          confidence=c.confidence, extractor=c.extractor, review_status="unreviewed",
+                                          is_current=True, review_note="; ".join(
+                                              c.notes + [f"Re-read by the updated reader. Previous reading: {cur.value}"])[:2000]))
+                req.current_version_no = next_no
+                req.title, req.category = c.title, c.category
+                reread_updated += 1
+            else:
+                db.add(RequirementVersion(requirement_id=req.id, version_no=next_no, tender_version=cur.tender_version,
+                                          nature=c.nature, value=c.value, value_text=c.excerpt, anchor_id=a.id,
+                                          confidence=c.confidence, extractor=c.extractor, review_status="needs_review",
+                                          is_current=False,
+                                          review_note="The updated reader reads this clause differently. The reviewed "
+                                                      "value is kept; compare and correct it if needed."))
+                reread_offered += 1
+            changed_req_ids.append(req.id)
+            continue
         if doc.is_amendment:
             # Amendment changes ONLY this clause; previous version retained as history.
             if cur is not None:
                 cur.is_current = False
             db.add(RequirementVersion(requirement_id=req.id, version_no=next_no, tender_version=doc.effective_tender_version,
                                       nature=c.nature, value=c.value, value_text=c.excerpt, anchor_id=a.id,
-                                      confidence=c.confidence, review_status="needs_review", is_current=True,
+                                      confidence=c.confidence, extractor=c.extractor, review_status="needs_review", is_current=True,
                                       amendment_document_id=doc.id,
                                       review_note=f"Amended by {doc.filename}. Previous value: {cur.value if cur else None}"))
             req.current_version_no = next_no
@@ -76,14 +115,27 @@ def apply_candidates(db: Session, tender: Tender, doc: SourceDocument, cands: li
             # Two base documents disagree: keep both, mark material conflict for review.
             db.add(RequirementVersion(requirement_id=req.id, version_no=next_no, tender_version=doc.effective_tender_version,
                                       nature=c.nature, value=c.value, value_text=c.excerpt, anchor_id=a.id,
-                                      confidence=c.confidence, review_status="needs_review", is_current=False,
+                                      confidence=c.confidence, extractor=c.extractor, review_status="needs_review", is_current=False,
                                       review_note=f"Conflicting value found in {doc.filename}"))
             req.has_conflict = True
             conflicts += 1
             changed_req_ids.append(req.id)
+    if reread:
+        found = {c.key for c in cands}
+        for req in db.scalars(select(Requirement).where(Requirement.tender_id == tender.id)):
+            cur = current_version(req)
+            if (req.key not in found and cur is not None and cur.anchor and cur.anchor.document_id == doc.id
+                    and cur.review_status == "unreviewed" and _machine_read(cur)):
+                cur.review_status = "rejected"
+                cur.review_note = ((cur.review_note or "") + " | Withdrawn: the updated reader no longer finds this "
+                                   "requirement in the document.").strip(" |")
+                withdrawn += 1
+                changed_req_ids.append(req.id)
     if changed_req_ids:
-        invalidate_dependents(db, tender, changed_req_ids, reason=f"Requirements changed by {doc.filename}")
+        invalidate_dependents(db, tender, changed_req_ids,
+                              reason=f"Requirements {'re-read from' if reread else 'changed by'} {doc.filename}")
     return {"created": created, "amended": amended, "unchanged": unchanged, "conflicts": conflicts,
+            "reread_updated": reread_updated, "reread_offered": reread_offered, "withdrawn": withdrawn,
             "changed_requirement_ids": changed_req_ids}
 
 

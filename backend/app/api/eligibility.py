@@ -9,8 +9,9 @@ from sqlalchemy import select
 
 from ..audit import audit
 from ..deps import Ctx, get_ctx
-from ..models import ChecklistTask, EligibilityRule, Evaluation, EvidenceLink, EvidenceRecord, Requirement, User
-from ..services.eligibility import RuleError, approve_rule, blockers, evaluate_tender
+from ..models import ChecklistTask, EligibilityRule, Evaluation, EvidenceLink, EvidenceRecord, Requirement, Tender, User
+from ..services.eligibility import RuleError, _requirement_value, approve_rule, blockers, evaluate_tender, suggest_jv
+from ..services.planner import plan as qualification_plan
 from ..services.requirements import current_version
 from .common import parse_date_field, to_dict
 
@@ -19,6 +20,12 @@ router = APIRouter(prefix="/api/v1/tenders/{tender_id}", tags=["eligibility"])
 
 def rule_out(ctx: Ctx, r: EligibilityRule) -> dict:
     d = to_dict(r)
+    if not (r.params or {}).get("jv_suggested"):
+        # the JV clause may have been reviewed after this rule was proposed
+        t = ctx.db.get(Tender, r.tender_id)
+        sugg = suggest_jv(r.rule_type, _requirement_value(ctx.db, t, "jv.criteria_split")) if t else None
+        if sugg:
+            d["params"] = {**r.params, "jv_suggested": sugg}
     if r.requirement_id:
         req = ctx.db.get(Requirement, r.requirement_id)
         v = current_version(req) if req else None
@@ -152,6 +159,41 @@ def override(tender_id: int, eval_id: int, body: OverrideIn, ctx: Ctx = Depends(
     return to_dict(e)
 
 
+class SimilarityIn(BaseModel):
+    evidence_id: int
+    criterion_key: str = Field(min_length=3, max_length=120)
+    similar: bool | None = None  # None clears the decision
+    note: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/similarity")
+def set_similarity(tender_id: int, body: SimilarityIn, ctx: Ctx = Depends(get_ctx)):
+    """A reviewer decides whether a completed work is similar for one experience criterion of THIS tender.
+    The decision is per tender: a retaining wall is similar for a slope-protection tender, not for a road tender."""
+    ctx.require("rules.approve")
+    t = ctx.tender(tender_id)
+    ev = ctx.own(ctx.db.get(EvidenceRecord, body.evidence_id), "Evidence")
+    if ev.category not in ("completion_certificate", "performance_certificate"):
+        raise HTTPException(409, "Only completion / performance certificates can be marked similar")
+    for old in ctx.db.scalars(select(EvidenceLink).where(EvidenceLink.tender_id == t.id, EvidenceLink.evidence_id == ev.id,
+                                                         EvidenceLink.purpose == "similarity",
+                                                         EvidenceLink.criterion_key == body.criterion_key)):
+        ctx.db.delete(old)
+    if body.similar is not None:
+        ctx.db.add(EvidenceLink(tender_id=t.id, evidence_id=ev.id, purpose="similarity", criterion_key=body.criterion_key,
+                                status="accepted" if body.similar else "rejected", approved_by=ctx.user.id,
+                                attribution_note=body.note))
+    n = 0
+    for e in ctx.db.scalars(select(Evaluation).where(Evaluation.tender_id == t.id, Evaluation.stale.is_(False))):
+        if (e.calculation or {}).get("similarity_key") == body.criterion_key:
+            e.stale, e.stale_reason = True, "Similarity decision changed; evaluate again"
+            n += 1
+    audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="evidence.similarity", subject_type="evidence",
+          subject_id=ev.id, tender_id=t.id, criterion=body.criterion_key, similar=body.similar)
+    ctx.db.commit()
+    return {"evidence_id": ev.id, "criterion_key": body.criterion_key, "similar": body.similar, "stale_evaluations": n}
+
+
 @router.get("/bid-no-bid")
 def bid_no_bid(tender_id: int, ctx: Ctx = Depends(get_ctx)):
     ctx.require("tender.read")
@@ -172,6 +214,14 @@ def bid_no_bid(tender_id: int, ctx: Ctx = Depends(get_ctx)):
             "recommendation": recommendation, "review_status": "Draft — requires bid committee review",
             "disclaimer": "This report reflects reviewed rules and verified evidence only. It is not assurance of qualification or award.",
             "blockers": b["blockers"]}
+
+
+@router.get("/qualification-plan")
+def get_qualification_plan(tender_id: int, ctx: Ctx = Depends(get_ctx)):
+    """How to qualify: each criterion against each company alone, and the single-company and JV options ranked."""
+    ctx.require("tender.read")
+    t = ctx.tender(tender_id)
+    return qualification_plan(ctx.db, t)
 
 
 # ---------------------------------------------------------------- tasks

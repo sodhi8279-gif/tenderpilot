@@ -10,7 +10,10 @@ const CLASS_LABEL: Record<string, string> = { nit: "NIT", itb: "ITB", bds: "BDS 
 const lbl = (c: string) => CLASS_LABEL[c] || c.charAt(0).toUpperCase() + c.slice(1);
 
 type Doc = { id: number; filename: string; kind: string; doc_class: string; status: string; status_reason: string | null; page_count: number;
-  size: number; sha256: string; is_amendment: boolean; parent_id: number | null; page_status: Record<string, number> };
+  size: number; sha256: string; is_amendment: boolean; parent_id: number | null; page_status: Record<string, number>;
+  converted_kind: string | null; converted_by: string | null };
+type Estimate = { pages: number; requests: number; cost_usd_low: string; cost_usd_high: string; model: string; effort: string;
+  spent_this_month: string; budget: string; capped: boolean; price_as_of: string };
 
 export default function Documents({ tid, onChange }: { tid: number; onChange: () => void }) {
   const { can } = useMe();
@@ -87,10 +90,12 @@ export default function Documents({ tid, onChange }: { tid: number; onChange: ()
                       {CLASSES.map((c) => <option key={c} value={c}>{lbl(c)}</option>)}
                     </select>) : lbl(d.doc_class)}</td>
                   <td><Status s={d.status} />{d.status_reason && <div className="mt-1 max-w-xs text-xs text-muted">{d.status_reason}</div>}
-                    {d.status === "needs_password" && can("documents.write") && <PasswordForm tid={tid} doc={d.id} done={refresh} />}</td>
+                    {d.status === "needs_password" && can("documents.write") && <PasswordForm tid={tid} doc={d.id} done={refresh} />}
+                    {d.converted_kind && <div className="mt-1 max-w-xs text-xs text-muted">Text read from a .{d.converted_kind} copy made by {d.converted_by}. The original file is kept unchanged; the hash shown is the original's.</div>}</td>
                   <td className="text-sm">{d.page_count || "—"}<div className="text-xs text-muted">{Object.entries(d.page_status).map(([s, n]) => `${n} ${s}`).join(", ")}</div></td>
                   <td className="text-xs text-muted">{(d.size / 1024).toFixed(0)} KB<br />SHA-256 {d.sha256.slice(0, 12)}…</td>
-                  <td>{d.page_count > 0 && <Button kind="ghost" onClick={() => setOpen(open === d.id ? null : d.id)} aria-expanded={open === d.id}>{open === d.id ? "Hide pages" : "Pages"}</Button>}</td>
+                  <td className="whitespace-nowrap">{d.page_count > 0 && <Button kind="ghost" onClick={() => setOpen(open === d.id ? null : d.id)} aria-expanded={open === d.id}>{open === d.id ? "Hide pages" : "Pages"}</Button>}
+                    {sys.data?.ai.live && d.status === "processed" && can("documents.write") && <AiReview tid={tid} doc={d} done={refresh} />}</td>
                 </tr>
                 {open === d.id && <tr><td colSpan={6} className="bg-[#fafaf7]"><Pages tid={tid} doc={d.id} /></td></tr>}
               </Fragment>
@@ -140,6 +145,25 @@ function Pages({ tid, doc }: { tid: number; doc: number }) {
           <tr key={x.page_index}><td>{x.page_index + 1}{x.page_label && ` (${x.page_label})`}</td><td><Status s={x.status} /></td>
             <td>{x.text_source?.replace("_", " ") || "—"}</td><td>{x.confidence != null ? `${Math.round(x.confidence * 100)}%` : "—"}</td><td>{x.chars}</td>
             <td className="text-xs text-muted">{x.reason}</td></tr>))}</tbody></table>
+    </div>
+  );
+}
+
+function AiReview({ tid, doc, done }: { tid: number; doc: Doc; done: () => void }) {
+  const [est, setEst] = useState<Estimate | null>(null);
+  const act = useAction();
+  if (!est) return <Button kind="ghost" onClick={() => act.run(() => api<Estimate>(`/tenders/${tid}/documents/${doc.id}/ai-estimate`).then(setEst))}>AI review</Button>;
+  return (
+    <div className="mt-2 max-w-sm whitespace-normal rounded-md border border-line bg-white p-3 text-xs">
+      <ErrorBox error={act.error} />
+      <p>Sends the text of {est.pages} processed page(s) to the AI provider in {est.requests} request(s), using {est.model} at {est.effort} effort.</p>
+      <p className="mt-1">Estimated cost: <strong>USD {est.cost_usd_low} to {est.cost_usd_high}</strong> (list prices as of {est.price_as_of}). Spent this month: USD {est.spent_this_month} of USD {est.budget}.</p>
+      {est.capped && <p className="mt-1 text-gap">Only the first pages up to the limit set in Settings will be sent.</p>}
+      <p className="mt-1 text-muted">Results arrive as interpretations to review on the Clauses tab. Pages this model already read are skipped.</p>
+      <div className="mt-2 flex gap-2">
+        <Button onClick={() => act.run(() => api(`/tenders/${tid}/documents/${doc.id}/ai-review`, { json: {} }), () => { setEst(null); done(); })}>Send to AI</Button>
+        <Button kind="secondary" onClick={() => setEst(null)}>Cancel</Button>
+      </div>
     </div>
   );
 }

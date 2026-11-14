@@ -1,0 +1,29 @@
+TenderPilot is installed.
+
+HOW TO START
+Open the Start menu and click TenderPilot. A small black window opens and your browser shows TenderPilot.
+Keep that window open while you work. Close it to stop TenderPilot.
+
+The first time, create your organization and an administrator account (password of at least 10 characters).
+
+DEMO VERSION
+"TenderPilot Demo" is a separate practice copy filled with made-up (SYNTHETIC) data. Its sign-in details are shown
+on its sign-in page. Nothing you do in the demo touches your real data.
+
+WHERE YOUR DATA IS KEPT
+Real data:  %LOCALAPPDATA%\TenderPilot
+Demo data:  %LOCALAPPDATA%\TenderPilot-Demo
+Uninstalling or reinstalling TenderPilot does NOT delete these folders.
+
+BACKUPS
+Start menu > TenderPilot > "Back up TenderPilot data" writes a zip into %LOCALAPPDATA%\TenderPilot\backups.
+Copy it to a pen drive or another computer every week.
+
+INCLUDED
+Scanned-tender reading (Tesseract OCR, English and Hindi) is built in.
+
+OPTIONAL
+Old Word/Excel files (.doc, .xls) need LibreOffice (free, www.libreoffice.org). Without it, such files are marked
+"needs conversion" and everything else still works. Settings & audit > System checks shows what is installed.
+
+TenderPilot never submits bids, signs, pays or creates certificates. It runs only on this computer (127.0.0.1).

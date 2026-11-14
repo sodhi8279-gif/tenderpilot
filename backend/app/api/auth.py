@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -11,7 +13,7 @@ from ..db import get_db
 from ..deps import Ctx, get_ctx
 from ..models import ROLES, AuditEvent, Membership, Notification, Organization, User
 from ..security import PERMISSIONS, create_token, hash_password, verify_password
-from ..services.ai import get_provider
+from ..services import ai, convert
 from ..services.ingest import get_ocr
 from .common import to_dict
 
@@ -45,7 +47,11 @@ class OrgSettingsIn(BaseModel):
 
 @router.get("/setup/status")
 def setup_status(db: Session = Depends(get_db)):
-    return {"needs_setup": db.scalar(select(func.count()).select_from(User)) == 0}
+    out: dict = {"needs_setup": db.scalar(select(func.count()).select_from(User)) == 0}
+    # Demo build only (DEMO_MODE=1 is set by the demo launcher): show the shared SYNTHETIC demo sign-in.
+    if os.environ.get("DEMO_MODE") == "1" and os.environ.get("DEMO_PASSWORD"):
+        out["demo"] = {"email": "org.admin@demo.tenderpilot.local", "password": os.environ["DEMO_PASSWORD"]}
+    return out
 
 
 @router.post("/setup")
@@ -90,14 +96,19 @@ def me(ctx: Ctx = Depends(get_ctx)):
 
 @router.get("/system")
 def system(ctx: Ctx = Depends(get_ctx)):
+    """Short summary (kept for compatibility). Full checks: GET /system/checks."""
     org = ctx.db.get(Organization, ctx.org_id)
     ocr = get_ocr()
-    return {"ai": get_provider(org.allow_external_ai).describe(),
-            "ai_configured": settings.ai_provider == "anthropic" and bool(settings.anthropic_api_key),
+    view = {"ai": ai.get_provider(ctx.db, org).describe(),
+            "ai_configured": ai.configured_provider(ctx.db, org) is not None,
             "ocr": {"engine": ocr.name, "available": ocr.available(),
-                    "note": None if ocr.available() else "Install Tesseract OCR to read scanned pages; they are reported as unreadable until then."},
+                    "note": None if ocr.available() else "Tesseract not found: scanned pages are reported as unreadable."},
             "database": settings.database_url.split(":", 1)[0], "queue": "database-backed worker",
-            "converter": {"libreoffice": False, "note": "LibreOffice not detected: legacy .xls/.doc need manual conversion; PDF previews use the built-in renderer."}}
+            "converter": {"libreoffice": convert.available(),
+                          "note": "LibreOffice available: legacy .doc/.xls are converted for reading (originals kept)."
+                          if convert.available() else "LibreOffice not found: legacy .doc/.xls need manual conversion."}}
+    ctx.db.commit()
+    return view
 
 
 @router.get("/users")
@@ -137,6 +148,12 @@ def update_org(body: OrgSettingsIn, ctx: Ctx = Depends(get_ctx)):
     ctx.require("org.admin")
     org = ctx.db.get(Organization, ctx.org_id)
     if body.allow_external_ai is not None:
+        if body.allow_external_ai:
+            row = ai.settings_row(ctx.db, org.id)
+            cfg = ai.load_config(ctx.db, org)
+            if row.provider != "anthropic" or not cfg.key_source or row.last_test_ok is not True:
+                raise HTTPException(409, "Before enabling: choose the Anthropic provider, save an API key and pass the "
+                                         "connection test (Settings, AI provider).")
         org.allow_external_ai = body.allow_external_ai
     if body.retention_days is not None:
         org.retention_days = body.retention_days

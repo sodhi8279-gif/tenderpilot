@@ -19,11 +19,10 @@ from sqlalchemy.orm import Session
 from ..audit import audit, notify
 from ..config import settings
 from ..db import SessionLocal
-from ..models import ExtractionJob, Organization, SourceDocument, SourcePage, Tender, TenderVersion
+from ..models import ExtractionJob, Organization, SourceAnchor, SourceDocument, SourcePage, Tender, TenderVersion
 from ..storage import sha256, storage
-from . import ingest
-from .ai import get_provider
-from .extract import extract_from_page, find_bbox, merge_candidates
+from . import ai, convert, ingest, secretbox
+from .extract import READER_VERSION, extract_from_page, find_bbox, merge_candidates
 from .requirements import apply_candidates, bump_tender_version, sync_tender_facts
 
 log = logging.getLogger("tenderpilot.jobs")
@@ -39,6 +38,27 @@ class Cancelled(Exception):
 
 def set_password(doc_id: int, password: str) -> None:
     _PASSWORDS[doc_id] = password
+
+
+def extract_key(doc: SourceDocument) -> str:
+    """Includes the reader version, so a document read by an older reader is read again after an upgrade."""
+    return f"extract:{doc.id}:{doc.sha256}:{doc.doc_class}:{READER_VERSION}"
+
+
+def requeue_outdated_extractions(db: Session) -> int:
+    """At start-up: documents already read by an older reader are queued to be read again by the current one.
+    Reviewed values are kept (see apply_candidates(reread=True)); only unreviewed machine readings are refreshed."""
+    n = 0
+    read_before = set(db.scalars(select(ExtractionJob.document_id).where(
+        ExtractionJob.kind == "extract_requirements", ExtractionJob.status == "succeeded")))
+    for doc in db.scalars(select(SourceDocument).where(SourceDocument.status == "processed",
+                                                       SourceDocument.id.in_(read_before or {-1}))):
+        key = extract_key(doc)
+        if db.scalar(select(ExtractionJob.id).where(ExtractionJob.idempotency_key == key)) is None:
+            enqueue(db, kind="extract_requirements", org_id=doc.org_id, tender_id=doc.tender_id, document_id=doc.id, key=key)
+            n += 1
+    db.commit()
+    return n
 
 
 def enqueue(db: Session, *, kind: str, org_id: int, tender_id: int, document_id: int | None, key: str) -> ExtractionJob:
@@ -78,6 +98,8 @@ def run_job(db: Session, job: ExtractionJob) -> None:
             _ingest(db, job)
         elif job.kind == "extract_requirements":
             _extract(db, job)
+        elif job.kind == "ai_extract":
+            _ai_extract(db, job)
         else:
             raise ValueError(f"Unknown job kind {job.kind}")
         job.status, job.error = "succeeded", None
@@ -90,9 +112,10 @@ def run_job(db: Session, job: ExtractionJob) -> None:
     except Exception as exc:  # noqa: BLE001 - job boundary
         db.rollback()
         job = db.get(ExtractionJob, job.id)
-        msg = f"{type(exc).__name__}: {str(exc)[:300]}"
+        msg = secretbox.redact(f"{type(exc).__name__}: {str(exc)[:300]}")
         job.error = msg
-        permanent = isinstance(exc, ingest.UnsafeFile)  # retrying cannot fix an unsafe/oversized file
+        # Retrying cannot fix an unsafe file, a missing/disabled provider, a rejected key or an exhausted budget.
+        permanent = isinstance(exc, (ingest.UnsafeFile, ai.AIUnavailable))
         job.status = "queued" if job.attempts < job.max_attempts and not permanent else "failed"
         if job.status == "failed" and job.document_id:
             doc = db.get(SourceDocument, job.document_id)
@@ -240,10 +263,37 @@ def _ingest(db: Session, job: ExtractionJob) -> None:
         _store_pages(db, doc, ingest.csv_text_pages(data))
     elif doc.kind == "image":
         _store_pages(db, doc, [ingest.process_image(data, ocr)])
+    elif doc.kind in ("xls", "ole_legacy"):
+        src_ext = convert.legacy_type(doc.filename) or ("xls" if doc.kind == "xls" else None)
+        if src_ext is None or not convert.available():
+            doc.status = "needs_conversion"
+            doc.status_reason = ("Legacy binary format with an unrecognised extension: save it as PDF/DOCX/XLSX and upload again."
+                                 if src_ext is None else
+                                 "Legacy binary format. Install LibreOffice (see Settings, System checks) and retry, or save "
+                                 "as PDF/DOCX/XLSX and upload again.")
+            db.commit()
+            return
+        try:
+            out, target, secs = convert.convert(data, src_ext)
+        except convert.ConversionError as exc:
+            doc.status, doc.status_reason = "needs_conversion", str(exc)
+            db.commit()
+            return
+        # Original upload (storage_key, sha256) is untouched; the derived copy is stored separately.
+        doc.converted_storage_key = storage.put(doc.org_id, out, target)
+        doc.converted_kind, doc.converted_by = target, f"LibreOffice ({secs}s)"
+        db.commit()
+        if target == "docx":
+            _store_pages(db, doc, ingest.docx_text_pages(out))
+        elif target == "xlsx":
+            _store_pages(db, doc, ingest.xlsx_text_pages(out))
+        else:
+            doc.status, doc.status_reason = "needs_conversion", f"Converted to {target}, which is not read automatically yet."
+            db.commit()
+            return
     else:
         doc.status = "needs_conversion"
-        doc.status_reason = ("Legacy binary format. Convert with LibreOffice (adapter not installed) or save as "
-                             "PDF/XLSX and upload again.")
+        doc.status_reason = "Unrecognised format. Save it as PDF/DOCX/XLSX and upload again."
         db.commit()
         return
 
@@ -259,7 +309,7 @@ def _ingest(db: Session, job: ExtractionJob) -> None:
         doc.status, doc.status_reason = "processed", None
     db.commit()
     enqueue(db, kind="extract_requirements", org_id=doc.org_id, tender_id=doc.tender_id, document_id=doc.id,
-            key=f"extract:{doc.id}:{doc.sha256}:{doc.doc_class}")
+            key=extract_key(doc))
     audit(db, org_id=doc.org_id, user_id=None, action="document.processed", subject_type="source_document",
           subject_id=doc.id, tender_id=tender.id, pages=doc.page_count, doc_class=doc.doc_class)
     db.commit()
@@ -282,13 +332,10 @@ def _extract(db: Session, job: ExtractionJob) -> None:
     pages = list(db.scalars(select(SourcePage).where(SourcePage.document_id == doc.id, SourcePage.status == "processed")
                             .order_by(SourcePage.page_index)))
     job.progress_total = len(pages)
-    provider = get_provider(org.allow_external_ai)
     cands = []
     for sp in pages:
         _check_cancel(db, job)
         cands.extend(extract_from_page(sp.text or "", sp.page_index, sp.confidence))
-        if provider.live:
-            cands.extend(provider.propose_requirements(sp.text or "", sp.page_index))
         job.progress_done += 1
     merged = merge_candidates(cands)
     labels = {sp.page_index: sp.page_label for sp in pages}
@@ -300,14 +347,51 @@ def _extract(db: Session, job: ExtractionJob) -> None:
                 bboxes[i] = find_bbox(pdf, c.page_index, c.excerpt)
         finally:
             pdf.close()
-    result = apply_candidates(db, tender, doc, merged, bboxes, labels)
+    reread = db.scalar(select(SourceAnchor.id).where(SourceAnchor.document_id == doc.id).limit(1)) is not None
+    result = apply_candidates(db, tender, doc, merged, bboxes, labels, reread=reread)
     sync_tender_facts(db, tender)
     propose_rules(db, tender)
     generate_checklist(db, tender)
     audit(db, org_id=tender.org_id, user_id=None, action="requirements.extracted", subject_type="source_document",
-          subject_id=doc.id, tender_id=tender.id, extractor="heuristic-v1" + ("+" + provider.name if provider.live else ""),
+          subject_id=doc.id, tender_id=tender.id, extractor=READER_VERSION, reread=reread,
           **{k: v for k, v in result.items() if k != "changed_requirement_ids"})
     if doc.is_amendment and result["amended"]:
         notify(db, org_id=tender.org_id, tender_id=tender.id,
                message=f"{doc.filename} amended {result['amended']} requirement(s). Review before relying on eligibility.")
+    db.commit()
+    # AI runs as its own job so a provider outage or budget stop never blocks deterministic extraction.
+    if pages and ai.get_provider(db, org).live:
+        enqueue(db, kind="ai_extract", org_id=doc.org_id, tender_id=tender.id, document_id=doc.id,
+                key=f"ai:{doc.id}:{doc.sha256}:{doc.doc_class}")
+        db.commit()
+
+
+def _ai_extract(db: Session, job: ExtractionJob) -> None:
+    doc = db.get(SourceDocument, job.document_id)
+    tender = db.get(Tender, doc.tender_id)
+    org = db.get(Organization, tender.org_id)
+    provider = ai.get_provider(db, org)
+    if not provider.live:
+        raise ai.AIUnavailable("External AI is not enabled for this organization (Settings, AI provider).")
+    pages = list(db.scalars(select(SourcePage).where(SourcePage.document_id == doc.id, SourcePage.status == "processed")
+                            .order_by(SourcePage.page_index)))
+    run = ai.run_document(db, provider, org, tender, doc, pages, job, check_cancel=lambda: _check_cancel(db, job))
+    cands = run["candidates"]
+    bboxes: dict[int, list | None] = {}
+    if cands and doc.kind == "pdf":
+        pdf = ingest.open_pdf(storage.get(doc.storage_key), _PASSWORDS.get(doc.id))
+        try:
+            for i, c in enumerate(cands):
+                bboxes[i] = find_bbox(pdf, c.page_index, c.excerpt)
+        finally:
+            pdf.close()
+    labels = {sp.page_index: sp.page_label for sp in pages}
+    result = apply_candidates(db, tender, doc, cands, bboxes, labels) if cands else {"created": 0, "amended": 0, "unchanged": 0, "conflicts": 0}
+    audit(db, org_id=tender.org_id, user_id=None, action="requirements.ai_extracted", subject_type="source_document",
+          subject_id=doc.id, tender_id=tender.id, extractor=provider.extractor_id, accepted=len(cands),
+          discarded=run["discarded"], requests=run["requests"], cost_usd=run["cost_usd"], stopped=run["stopped"],
+          **{k: v for k, v in result.items() if k != "changed_requirement_ids"})
+    notify(db, org_id=tender.org_id, tender_id=tender.id, message=(
+        f"AI review of {doc.filename}: {len(cands)} interpretation(s) to review, {run['discarded']} discarded "
+        f"(excerpt not found verbatim), est. cost USD {run['cost_usd']}." + (f" Stopped: {run['stopped']}" if run["stopped"] else "")))
     db.commit()

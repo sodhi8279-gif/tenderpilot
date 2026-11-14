@@ -14,12 +14,17 @@ TASK_SPECS: dict[str, tuple] = {
     "fin.solvency": ("financial_qualification", "obtain_external", "solvency", "bank", "technical", False),
     "fin.bid_capacity": ("financial_qualification", "draft_internal", "existing_commitments", "CA", "technical", True),
     "exp.similar_work": ("bidder", "upload_existing", "completion_certificate", None, "technical", False),
+    "exp.specific": ("bidder", "upload_existing", "completion_certificate", None, "technical", False),
     "commercial.emd": ("fee_security", "obtain_external", "emd_proof", "bank", "fee_emd", False),
     "commercial.tender_fee": ("fee_security", "upload_existing", "fee_proof", None, "fee_emd", False),
     "doc.poa": ("bidder", "notarize", "power_of_attorney", "notary", "technical", True),
     "doc.affidavit": ("bidder", "print_sign_scan", "declaration", "notary", "technical", True),
     "doc.blacklisting": ("bidder", "draft_internal", "declaration", None, "technical", True),
     "doc.oem_authorization": ("specialist", "obtain_external", "oem_authorization", "OEM", "technical", False),
+    "tech.personnel": ("technical", "upload_existing", "personnel", None, "technical", False),
+    "tech.equipment": ("technical", "upload_existing", "machinery", None, "technical", False),
+    "tech.quantity": ("technical", "upload_existing", "executed_quantity", None, "technical", False),
+    "tech.registration_class": ("bidder", "upload_existing", "registration", None, "technical", False),
 }
 
 
@@ -40,6 +45,23 @@ def _question(req: Requirement, excerpt: str, clause: str | None, page: int | No
                 f"value and employer; required by {where}.")
     if k == "fin.avg_turnover":
         return f"Upload CA-certified annual turnover for {entity_name} for each required financial year; required by {where}."
+    if k.startswith("exp.specific."):
+        v = current_version(req)
+        val = (v.value if v else {}) or {}
+        size = ", ".join(f"{d['name']} ≥ {d['min']} m" for d in val.get("dimensions") or [])
+        return (f"Upload completion certificates / allotment orders for {entity_name} showing work of the kind "
+                f"'{val.get('work') or req.title}'{' (' + size + ')' if size else ''}, with the scope, sizes, completion date "
+                f"and value; required by {where}.")
+    if k.startswith("tech.personnel."):
+        v = current_version(req)
+        val = (v.value if v else {}) or {}
+        return (f"Upload CVs with degree certificates and experience proof for {val.get('count') or ''} {val.get('role') or 'key staff'} "
+                f"(minimum {val.get('min_qualification') or 'as per clause'}, {val.get('min_experience_years') or '?'} years); required by {where}.")
+    if k.startswith("tech.equipment."):
+        return f"Upload ownership proof (invoice / RC) or a lease agreement for the plant & machinery listed in {where}."
+    if k.startswith("tech.quantity."):
+        return (f"Upload completion certificates showing quantities executed per financial year for the items in {where}, "
+                f"and record each quantity in the vault.")
     if k == "commercial.emd":
         return f"Upload proof of EMD / bid security (BG, FDR or online payment receipt) as specified in {where}."
     return f"Provide '{req.title}' for {entity_name}; required by {where}."

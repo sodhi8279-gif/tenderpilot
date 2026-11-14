@@ -28,6 +28,45 @@ class Organization(Base, TimestampMixin):
     retention_days: Mapped[int] = mapped_column(Integer, default=0)  # 0 = keep
 
 
+class AiSettings(Base, TimestampMixin):
+    """Per-organization AI provider configuration. The API key is stored encrypted (secretbox)."""
+    __tablename__ = "ai_settings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), unique=True)
+    provider: Mapped[str] = mapped_column(String(20), default="offline")  # offline/anthropic
+    model: Mapped[str] = mapped_column(String(60), default="claude-opus-5-5")
+    effort: Mapped[str] = mapped_column(String(10), default="medium")  # low/medium/high
+    monthly_budget_usd: Mapped[object] = mapped_column(DecimalStr, default="10.00")
+    max_pages_per_run: Mapped[int] = mapped_column(Integer, default=300)
+    key_ciphertext: Mapped[str | None] = mapped_column(Text)
+    key_hint: Mapped[str | None] = mapped_column(String(8))
+    key_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    key_updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    last_test_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_test_ok: Mapped[bool | None] = mapped_column(Boolean)
+    last_test_message: Mapped[str | None] = mapped_column(Text)
+
+
+class AiUsage(Base):
+    """One row per provider request: measured tokens and the cost at the cached list price."""
+    __tablename__ = "ai_usage"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    tender_id: Mapped[int | None] = mapped_column(ForeignKey("tenders.id"))
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("source_documents.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    model: Mapped[str] = mapped_column(String(60))
+    pages: Mapped[str] = mapped_column(String(200), default="")
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[object | None] = mapped_column(DecimalStr)
+    outcome: Mapped[str] = mapped_column(String(30))  # ok/refusal/truncated/error/budget_stop
+    message: Mapped[str | None] = mapped_column(Text)
+    accepted: Mapped[int] = mapped_column(Integer, default=0)
+    discarded: Mapped[int] = mapped_column(Integer, default=0)
+    request_id: Mapped[str | None] = mapped_column(String(100))
+
+
 class User(Base, TimestampMixin):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -153,6 +192,11 @@ class SourceDocument(Base, TimestampMixin):
     is_amendment: Mapped[bool] = mapped_column(Boolean, default=False)
     effective_tender_version: Mapped[int] = mapped_column(Integer, default=1)
     precedence_rank: Mapped[int | None] = mapped_column(Integer)
+    # Legacy .doc/.xls: the original upload (storage_key, sha256) is never modified; the LibreOffice
+    # output is stored separately and only used for reading text.
+    converted_storage_key: Mapped[str | None] = mapped_column(String(300))
+    converted_kind: Mapped[str | None] = mapped_column(String(20))
+    converted_by: Mapped[str | None] = mapped_column(String(80))
 
 
 class SourcePage(Base):
@@ -262,7 +306,7 @@ class EligibilityRule(Base, TimestampMixin):
 EVIDENCE_CATEGORIES = (
     "incorporation", "registration", "audited_accounts", "turnover_certificate", "net_worth",
     "solvency", "bank_facility", "existing_commitments", "work_order", "agreement",
-    "completion_certificate", "performance_certificate", "project_scope", "machinery", "personnel",
+    "completion_certificate", "performance_certificate", "executed_quantity", "project_scope", "machinery", "personnel",
     "oem_authorization", "datasheet", "quality_certification", "declaration", "power_of_attorney",
     "pan", "gst", "emd_proof", "fee_proof", "other",
 )
@@ -305,6 +349,10 @@ class EvidenceLink(Base, TimestampMixin):
     attribution_note: Mapped[str | None] = mapped_column(Text)
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     status: Mapped[str] = mapped_column(String(20), default="proposed")  # proposed/accepted/rejected
+    # "task" (checklist), "attribution" (name differs) or "similarity" (reviewer: this work is / is not similar
+    # for the criterion `criterion_key` of this tender: accepted = similar, rejected = not similar).
+    purpose: Mapped[str | None] = mapped_column(String(20), default="task")
+    criterion_key: Mapped[str | None] = mapped_column(String(120))
 
 
 class Evaluation(Base, TimestampMixin):

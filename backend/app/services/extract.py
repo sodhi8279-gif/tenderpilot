@@ -13,11 +13,15 @@ from decimal import Decimal
 
 from .dates import detect_timezone, parse_date
 from .money import parse_indian_amount
+from .technical import extract_experience, extract_technical
+
+# Bump when the reader changes: documents read by an older reader are read again on the next start.
+READER_VERSION = "reader-2"
 
 WORDNUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
            "ten": 10, "single": 1}
 NUM = r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|single)"
-AMT = r"(?:Rs\.?|INR|₹)\s*[\d,]+(?:\.\d+)?\s*(?:crores?|cr\.?|lakhs?|lacs?)?"
+AMT = r"(?:Rs\s?\.{0,2}|INR|₹)\s*[\d,]+(?:\.\d+)?\s*(?:crores?|cr\.?|lakhs?|lacs?)?"
 CLAUSE_RE = re.compile(r"^\s*(?:clause\s+)?((?:\d{1,2}\.){0,4}\d{1,3}(?:\.?\([a-z0-9]+\))?|[A-Z]\.\d+(?:\.\d+)*|\([a-z]\))[\s.:)-]", re.I)
 
 
@@ -39,6 +43,7 @@ class Candidate:
     mandatory: bool = True
     nature: str = "extracted"
     notes: list[str] = field(default_factory=list)
+    extractor: str = "heuristic-v1"
 
 
 def _sentence_around(text: str, start: int, end: int, limit: int = 320) -> str:
@@ -100,8 +105,13 @@ PATTERNS: list[tuple[str, str, str, re.Pattern]] = [
      re.compile(r"bid(?:ding)?\s+capacity[^\n]{0,200}?(?:A\s*[x×*]\s*N\s*[x×*]\s*(\d(?:\.\d+)?)\s*-\s*B|=\s*\(?\s*A\s*[x×*]\s*N\s*[x×*]\s*(\d(?:\.\d+)?))", re.I | re.S)),
     ("qual.cutoff", "qualification", "Qualification reference date",
      re.compile(r"(?:as\s+on|ending|up\s*to)\s+(the\s+(?:last\s+(?:date|day)[^\n.]{0,80}|date\s+of\s+(?:bid\s+)?(?:submission|opening)[^\n.]{0,40}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}))", re.I)),
+    # "single entity / sole bidder or a Joint venture" states that a JV may bid
     ("jv.permitted", "jv", "Joint venture permission",
-     re.compile(r"(joint\s+venture|consortium|\bJV\b)[^\n.]{0,60}?\b(not\s+(?:be\s+)?(?:permitted|allowed|accepted)|(?:is|are|shall\s+be)\s+(?:permitted|allowed|accepted))", re.I)),
+     re.compile(r"(?:single\s+entity|sole\s+(?:bidder|proprietor|contractor)|individual\s+(?:firm|bidder|entity))[^.]{0,60}?\bor\s+(?:a\s+|as\s+a\s+)?"
+                r"(joint\s+venture|consortium|JV)\b", re.I)),
+    # A ban on *foreign* JVs ("joint ventures with foreign partners ... are not permitted") is not a ban on JVs.
+    ("jv.permitted", "jv", "Joint venture permission",
+     re.compile(r"(joint\s+venture|consortium|\bJV\b)s?(?![^\n.]{0,70}?foreign)[^\n.]{0,60}?\b(not\s+(?:be\s+)?(?:permitted|allowed|accepted)|(?:is|are|shall\s+be)\s+(?:permitted|allowed|accepted))", re.I)),
     ("jv.max_members", "jv", "Maximum JV members",
      re.compile(r"(?:joint\s+venture|consortium|JV)[^\n.]{0,80}?(?:not\s+more\s+than|maximum(?:\s+of)?|up\s+to)\s+" + NUM + r"\s+(?:\(\d\)\s+)?(?:members|partners|firms)", re.I)),
     ("jv.lead_share", "jv", "Lead member minimum share",
@@ -113,8 +123,12 @@ PATTERNS: list[tuple[str, str, str, re.Pattern]] = [
 ]
 
 SIMILAR_WORK_RE = re.compile(
-    r"(?P<n>" + NUM + r")\s+similar\s+(?:completed\s+)?works?\s+(?:each\s+)?(?:of\s+value\s+|costing\s+|of\s+)?(?:not\s+less\s+than\s+)?"
+    r"(?P<n>" + NUM + r")\s+similar\s+(?:completed\s+)?works?\s+(?:[a-z]{1,5}\s+(?=each\b))?(?:each\s+)?(?:of\s+value\s+|costing\s+|of\s+)?(?:[‘’'\x22]?not\s+less\s+than\s+)?"
     r"(?:(?P<pct>\d{1,3})\s*%\s*(?:of\s+(?:the\s+)?estimated\s+(?:cost|value))?|(?P<amt>" + AMT + "))", re.I)
+ESTIMATE_TABLE_HDR = re.compile(r"estimated\s+cost\s+(?:of\s+(?:the\s+)?work|put\s+to\s+tender)|advertised\s+(?:cost|value)|"
+                                r"estimated\s+(?:value|amount)\s+of\s+(?:the\s+)?work", re.I)
+ESTIMATE_TABLE_VAL = re.compile(r"(?<![\d.,])(?:(?:Rs\s?\.{0,2}|INR|₹)\s*)?\d+(?:,\d{2,3})*(?:\.\d+)?\s*(?:crores?|cr\b\.?|lakhs?|lacs?)", re.I)
+CLAUSE_START_RE = re.compile(r"(?:(?<=\s)|^)(?<!Rs\.\s)(?<!Rs\s)(?<!INR\s)\d{1,2}(?:\.\d{1,2})+\s+(?=[A-Z])(?!(?:Crores?|Lakhs?|Lacs?|Million)\b)")
 PERIOD_RE = re.compile(r"(?:during\s+the\s+)?last\s+" + NUM + r"\s+(?:\(\d+\)\s+)?(?:financial\s+|completed\s+|consecutive\s+)?years?", re.I)
 
 DOC_REQUIREMENTS = [
@@ -143,6 +157,8 @@ def extract_from_page(text: str, page_index: int, page_conf: float | None) -> li
     # Same length as `text`, so match positions still index the original for clause lookup.
     flat = text.replace(chr(13), " ").replace(chr(10), " ")
     for key, cat, title, rx in PATTERNS:
+        if key in seen_keys:
+            continue  # an earlier pattern for the same fact already matched on this page
         m = rx.search(flat)
         if not m:
             continue
@@ -220,7 +236,25 @@ def extract_from_page(text: str, page_index: int, page_conf: float | None) -> li
         out.append(Candidate(key, cat, title, value, excerpt, page_index, clause, _conf(base, page_conf), notes=notes))
         seen_keys.add(key)
 
+    # Estimated cost printed in the NIT table: the figure sits under the column heading without "Rs."
+    if "commercial.estimate" not in seen_keys and (hm := ESTIMATE_TABLE_HDR.search(flat)):
+        vm = ESTIMATE_TABLE_VAL.search(flat, hm.end(), hm.end() + 700)
+        amt = parse_indian_amount(vm.group(0)) if vm else None
+        if amt:
+            out.append(Candidate("commercial.estimate", "commercial", "Estimated cost put to tender",
+                                 {"amount": str(amt), "currency": "INR", "original": " ".join(vm.group(0).split())},
+                                 f"{' '.join(hm.group(0).split())} … {' '.join(vm.group(0).split())}", page_index,
+                                 _clause_for(text, vm.start()), _conf(0.65, page_conf),
+                                 notes=["Read from the NIT table (column heading and figure are apart); confirm the amount."]))
+            seen_keys.add("commercial.estimate")
+
+    # General / specific experience sections (nature of work, sizes, alternatives, JV note)
+    exp_cands, exp_spans = extract_experience(text, page_index, page_conf, _clause_for, Candidate)
+    out.extend(exp_cands)
+
     for m in SIMILAR_WORK_RE.finditer(flat):
+        if any(s <= m.start() < e for s, e in exp_spans):
+            continue  # already read, with its nature of work, as part of the experience section
         n = wn(m.group("n"))
         excerpt = _sentence_around(flat, m.start(), m.end(), 400)
         val: dict = {"count": n}
@@ -229,7 +263,12 @@ def extract_from_page(text: str, page_index: int, page_conf: float | None) -> li
         if m.group("amt"):
             val["amount"] = str(parse_indian_amount(m.group("amt")))
         # nearest period phrase to this clause (avoids picking up a neighbouring clause's period)
+        # Search only from the start of this numbered clause, so "turnover during the last 3 financial years" in
+        # clause 10.1 is not taken as the experience period of clause 10.2.
         lo = max(0, m.start() - 300)
+        starts = [b.start() for b in CLAUSE_START_RE.finditer(flat, lo, m.start())]
+        if starts:
+            lo = starts[-1]
         periods = list(PERIOD_RE.finditer(flat[lo: m.end() + 300]))
         pm = min(periods, key=lambda p: abs(lo + p.start() - m.start())) if periods else None
         val["period_years"] = wn(pm.group(1)) if pm else None
@@ -245,6 +284,9 @@ def extract_from_page(text: str, page_index: int, page_conf: float | None) -> li
             excerpt = _sentence_around(flat, m.start(), m.end(), 240)
             out.append(Candidate(key, "document", title, {"evidence_category": evcat}, excerpt, page_index,
                                  _clause_for(text, m.start()), _conf(0.75, page_conf)))
+
+    # Technical qualification criteria (personnel, plant & machinery, quantities, registration class, JV split)
+    out.extend(extract_technical(text, flat, page_index, page_conf, _clause_for, _sentence_around, Candidate))
     return out
 
 
@@ -255,6 +297,18 @@ def merge_candidates(cands: list[Candidate]) -> list[Candidate]:
         cur = best.get(c.key)
         if cur is None:
             best[c.key] = c
+            continue
+        if c.key == "jv.criteria_split":
+            # The JV clause is often split over pages (sharing rule on one, lead minimum on another): combine them.
+            added = {k: v for k, v in c.value.items() if k not in cur.value}
+            clash = {k for k, v in c.value.items() if k in cur.value and cur.value[k] != v}
+            if added:
+                cur.value = {**cur.value, **added}
+                cur.excerpt = f"{cur.excerpt} … (page {c.page_index + 1}) {c.excerpt}"[:600]
+            if clash:
+                cur.notes.append(f"Different JV sharing wording also on page {c.page_index + 1}: "
+                                 f"{ {k: c.value[k] for k in clash} }")
+                cur.confidence = min(cur.confidence, 0.6)
             continue
         if cur.value != c.value and c.category not in ("document",):
             cur.notes.append(f"Different value also found on page {c.page_index + 1}: {c.value}")

@@ -13,9 +13,19 @@ type Evid = { id: number; legal_entity_id: number; entity_name: string; category
 const FIELDS: Record<string, string[]> = {
   turnover_certificate: ["fy", "turnover"], audited_accounts: ["fy", "turnover", "net_worth"], net_worth: ["net_worth", "as_of"],
   solvency: ["amount"], existing_commitments: ["amount"],
-  completion_certificate: ["work_name", "employer", "executed_value", "completion_date", "status", "completed_pct", "is_similar"],
-  performance_certificate: ["work_name", "executed_value", "completion_date", "status", "is_similar"],
+  completion_certificate: ["work_name", "scope_of_work", "dimensions", "employer", "executed_value", "completion_date", "status", "completed_pct", "is_similar"],
+  performance_certificate: ["work_name", "scope_of_work", "dimensions", "executed_value", "completion_date", "status", "is_similar"],
+  personnel: ["person_name", "qualification", "discipline", "experience_years", "current_designation", "employment"],
+  machinery: ["equipment_type", "quantity", "capacity", "capacity_unit", "ownership", "make_model", "registration_no"],
+  executed_quantity: ["work_name", "item", "quantity", "unit", "fy", "dia_mm", "material"],
+  registration: ["authority", "class", "registration_no"],
 };
+const HINT: Record<string, string> = { qualification: "e.g. B.E. Civil, Diploma Mechanical", experience_years: "total years, digits",
+  employment: "on rolls / to be engaged", equipment_type: "e.g. Hydraulic excavator, Batching plant", capacity_unit: "MT / cum/hr / kVA / TPH",
+  ownership: "owned / leased / hired", item: "e.g. DI pipe laying, Earthwork, RCC", unit: "km / m / cum / sqm / MT", dia_mm: "pipe diameter in mm",
+  class: "as printed, e.g. I, I(A), Class-II", quantity: "digits only",
+  scope_of_work: "as printed, e.g. RCC retaining wall with anchor bolts", dimensions: "sizes on the certificate, e.g. height 8 m; length 60 m",
+  current_designation: "e.g. Site Engineer, Safety Officer", is_similar: "per tender: confirm in the eligibility matrix" };
 
 export default function Vault() {
   const [tab, setTab] = useState("evidence");
@@ -108,7 +118,7 @@ function Upload({ ents, cats, replace, done }: { ents: Entity[]; cats: string[];
         <div className="grid grid-cols-2 gap-2"><Field label="Issue date"><input type="date" className={inputCls} value={f.issue_date} onChange={(e) => setF({ ...f, issue_date: e.target.value })} /></Field>
           <Field label="Expiry date"><input type="date" className={inputCls} value={f.expiry_date} onChange={(e) => setF({ ...f, expiry_date: e.target.value })} /></Field></div>
         {fieldKeys.map((k) => (
-          <Field key={k} label={k.replace(/_/g, " ")} hint={k.includes("date") || k === "as_of" ? "YYYY-MM-DD" : k === "fy" ? "e.g. 2025-26" : k === "status" ? "completed / substantially_completed" : k.includes("value") || k === "turnover" || k === "amount" || k === "net_worth" ? "Rupees, digits only" : undefined}>
+          <Field key={k} label={k.replace(/_/g, " ")} hint={HINT[k] || (k.includes("date") || k === "as_of" ? "YYYY-MM-DD" : k === "fy" ? "e.g. 2025-26" : k === "status" ? "completed / ongoing / substantially_completed" : k.includes("value") || k === "turnover" || k === "amount" || k === "net_worth" ? "Rupees, digits only" : undefined)}>
             {k === "is_similar" ? <select className={inputCls} value={f.fields[k] || ""} onChange={(e) => setF({ ...f, fields: { ...f.fields, [k]: e.target.value } })}>
               <option value="">Not assessed</option><option value="yes">Yes, matches the tender's similar-work definition</option><option value="no">No</option></select>
               : <input className={inputCls} value={f.fields[k] || ""} onChange={(e) => setF({ ...f, fields: { ...f.fields, [k]: e.target.value } })} />}

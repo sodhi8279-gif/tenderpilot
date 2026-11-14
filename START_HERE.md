@@ -2,7 +2,24 @@
 
 TenderPilot helps your team study a tender, check eligibility against your own company records, prepare the forms and the priced BOQ, and assemble the files to upload to the portal. It runs on your own computer, and your documents stay on it.
 
-## 1. Start the program
+## 1. Install (recommended)
+
+The `installer` folder holds two setup files:
+
+| File | What it installs |
+|---|---|
+| `TenderPilot-Setup.exe` | TenderPilot for real tenders, plus a "TenderPilot Demo" shortcut and a backup shortcut |
+| `TenderPilot-Demo-Setup.exe` | The demo only: a practice copy with made-up (SYNTHETIC) data, for learning or showing others |
+
+Double-click the file and follow the steps. No administrator password is needed. Windows may show "Windows protected your PC" because the file is not code-signed: click **More info**, then **Run anyway**.
+
+After installing, open the Start menu and click **TenderPilot** (or **TenderPilot Demo**). A small black window opens and your browser shows TenderPilot. Keep the window open while you work; close it to stop.
+
+- Real data is kept in `%LOCALAPPDATA%\TenderPilot`; demo data in `%LOCALAPPDATA%\TenderPilot-Demo`. Uninstalling never deletes them.
+- Scanned-tender reading (OCR) is built in. Old .doc/.xls files also need LibreOffice (free).
+- The installed version starts with an empty database. Tenders entered in the developer copy (the method below) are not moved across automatically.
+
+## 1b. Start from the source folder (developers)
 
 1. Open the `TENDERPRO` folder in File Explorer.
 2. Right-click `scripts\start.ps1` and choose **Run with PowerShell**.
@@ -39,7 +56,8 @@ TenderPilot helps your team study a tender, check eligibility against your own c
 
 ## 4. Optional extras
 
-- **Scanned tenders:** install Tesseract OCR (Windows installer from the UB Mannheim build) with English and Hindi. Without it, scanned pages are listed as "unreadable" rather than skipped silently.
+- **Scanned tenders and old Word/Excel files:** Tesseract OCR (English and Hindi) and LibreOffice are installed on this computer. Check they are working under **Settings & audit → System checks**.
+- **AI reading help (optional, paid):** under **Settings & audit → AI provider**, an administrator can connect an Anthropic account. Type the API key only into that screen, never into chat or email. AI suggestions are marked "AI interpretation", show the clause they came from, and must be checked by a person. Amounts, dates and eligibility limits always come from the rule-based reading and your reviewers, never from AI.
 - **Backups:** stop TenderPilot, then run `scripts\backup.ps1`. It writes a zip into the `backups` folder.
 
 If something goes wrong, the screen tells you what happened and how to fix it. For technical details, see `README.md`.

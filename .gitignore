@@ -15,3 +15,10 @@ real_documents/
 backend/fixtures/generated/
 .playwright-mcp/
 backups/
+packaging/build/
+packaging/dist/
+installer/
+
+# local tooling / build noise
+.claude/settings.local.json
+packaging/build-log.txt

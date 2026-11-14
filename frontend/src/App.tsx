@@ -17,10 +17,11 @@ export const useMe = () => useContext(MeCtx)!;
 function Login() {
   const nav = useNavigate();
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
+  const [demo, setDemo] = useState<{ email: string; password: string } | null>(null);
   const [f, setF] = useState({ email: "", password: "", name: "", org_name: "" });
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { api("/setup/status").then((r) => setNeedsSetup(r.needs_setup)).catch(() => setNeedsSetup(false)); }, []);
+  useEffect(() => { api("/setup/status").then((r) => { setNeedsSetup(r.needs_setup); setDemo(r.demo || null); }).catch(() => setNeedsSetup(false)); }, []);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setBusy(true); setErr(null);
     try {
@@ -35,6 +36,13 @@ function Login() {
       <form onSubmit={submit} className="w-full max-w-sm rounded-lg bg-panel p-6 shadow-sm">
         <h1 className="text-xl font-semibold">TenderPilot</h1>
         <p className="mb-5 text-sm text-muted">{needsSetup ? "Create your organization and the first administrator account." : "Sign in to your bid workspace."}</p>
+        {demo && !needsSetup && (
+          <div className="mb-4 rounded-md border border-line bg-teal-soft p-3 text-sm">
+            <div className="font-medium">Demo version with made-up (SYNTHETIC) data</div>
+            <div className="mt-1 text-muted">Email: {demo.email}<br />Password: {demo.password}</div>
+            <button type="button" className="mt-2 text-teal underline" onClick={() => setF({ ...f, email: demo.email, password: demo.password })}>Fill in for me</button>
+          </div>
+        )}
         <ErrorBox error={err} />
         <div className="space-y-3">
           {needsSetup && <Field label="Organization name"><input required className={inputCls} value={f.org_name} onChange={set("org_name")} /></Field>}

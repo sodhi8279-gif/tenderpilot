@@ -9,8 +9,21 @@ type Rule = { id: number; rule_type: string; params: Record<string, unknown>; st
 type Ev = { id: number; rule_id: number; subject: string; result: string; explanation: string; calculation: Record<string, unknown>;
   missing_inputs: string[]; remedial_action: string | null; override_result: string | null; override_rationale: string | null; rule: Rule };
 
-const EDITABLE: Record<string, string[]> = { avg_turnover: ["threshold", "years"], similar_work: ["count", "percent_of_estimate", "amount", "period_years", "substantial_threshold_pct"],
-  net_worth: ["min"], solvency: ["min"], bid_capacity: ["M", "years_for_A"], jv_max_members: ["max_members"], jv_lead_share: ["min_percent"] };
+const EDITABLE: Record<string, string[]> = { avg_turnover: ["threshold", "years"],
+  similar_work: ["count", "percent_of_estimate", "amount", "period_years", "work_nature", "keywords", "dimensions", "allow_ongoing", "substantial_threshold_pct"],
+  specific_experience: ["count", "work", "keywords", "dimensions", "period_years", "percent_of_estimate", "amount", "allow_ongoing"],
+  net_worth: ["min"], solvency: ["min"], bid_capacity: ["M", "years_for_A"], jv_max_members: ["max_members"], jv_lead_share: ["min_percent"],
+  personnel: ["count", "min_qualification", "disciplines", "min_experience_years"], equipment: ["count", "min_capacity", "capacity_unit", "ownership"],
+  physical_quantity: ["min_quantity", "unit", "basis", "period_years", "min_dia_mm", "material"], registration_class: ["accepted_classes", "authority"] };
+const HINTS: Record<string, string> = { min_qualification: "iti / diploma / graduate / postgraduate", disciplines: "e.g. civil, mechanical",
+  ownership: "owned / owned_or_leased", basis: "any_one_year / cumulative", accepted_classes: "comma-separated, e.g. I, I(A)", material: "DI / MS / HDPE…",
+  dimensions: "e.g. height 7.5 m; length 10 m", keywords: "words a similar work must mention, comma-separated", allow_ongoing: "yes / no",
+  work_nature: "kind of work, as in the clause", work: "kind of work, as in the clause" };
+const LISTS = ["disciplines", "accepted_classes", "keywords"];
+const showParam = (k: string, v: unknown) => k === "dimensions" && Array.isArray(v)
+  ? (v as { name: string; min: string; unit?: string }[]).map((d) => `${d.name} ${d.min} ${d.unit || "m"}`).join("; ")
+  : typeof v === "boolean" ? (v ? "yes" : "no") : Array.isArray(v) ? v.join(", ") : String(v ?? "");
+const INTS = ["years", "count", "period_years", "max_members", "years_for_A", "min_experience_years", "min_dia_mm"];
 
 export default function Eligibility({ t, onChange }: { t: Tender; onChange: () => void }) {
   const { can } = useMe();
@@ -41,7 +54,7 @@ export default function Eligibility({ t, onChange }: { t: Tender; onChange: () =
         {!evs.data?.evaluations.length ? <Empty>Not evaluated yet. Confirm the rules, add evidence in the company vault, then evaluate.</Empty> : (
           <div className="overflow-x-auto"><table className="datagrid">
             <thead><tr><th>Requirement</th><th>Applies to</th><th>Result</th><th>Calculation and evidence</th><th>Missing / next step</th></tr></thead>
-            <tbody>{evs.data.evaluations.map((e) => <EvRow key={e.id} e={e} tid={t.id} reload={reload} canOverride={can("eligibility.override")} />)}</tbody>
+            <tbody>{evs.data.evaluations.map((e) => <EvRow key={e.id} e={e} tid={t.id} reload={reload} canOverride={can("eligibility.override")} canJudge={can("rules.approve")} />)}</tbody>
           </table></div>
         )}
       </Panel>
@@ -60,18 +73,20 @@ export default function Eligibility({ t, onChange }: { t: Tender; onChange: () =
 function RuleRow({ t, r, reload, canApprove }: { t: Tender; r: Rule; reload: () => void; canApprove: boolean }) {
   const [open, setOpen] = useState(false);
   const keys = EDITABLE[r.rule_type] || [];
-  const [vals, setVals] = useState<Record<string, string>>(Object.fromEntries(keys.map((k) => [k, r.low_confidence ? "" : String(r.params[k] ?? "")])));
-  const jv0 = (r.params.jv || {}) as Record<string, string>;
+  const [vals, setVals] = useState<Record<string, string>>(Object.fromEntries(keys.map((k) => [k, r.low_confidence ? "" : showParam(k, r.params[k])])));
+  const sugg = (r.params.jv_suggested || null) as Record<string, string> | null;
+  const jv0 = (r.params.jv || sugg || {}) as Record<string, string>;
   const [jv, setJv] = useState({ mode: jv0.mode || "", lead_min_pct: jv0.lead_min_pct || "", member_min_pct: jv0.member_min_pct || "" });
   const act = useAction();
-  const clean = (o: Record<string, string>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== "").map(([k, v]) => [k, /^\d+$/.test(v) && ["years", "count", "period_years", "max_members", "years_for_A"].includes(k) ? Number(v) : v]));
+  const clean = (o: Record<string, string>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== "").map(([k, v]) =>
+    [k, LISTS.includes(k) ? v.split(",").map((x) => x.trim()).filter(Boolean) : /^\d+$/.test(v) && INTS.includes(k) ? Number(v) : v]));
   const approve = () => act.run(() => api(`/tenders/${t.id}/rules/${r.id}/approve`, { json: { params: { ...clean(vals), ...(jv.mode ? { jv: clean(jv) } : {}) }, confirm_low_confidence: r.low_confidence } }), reload);
   const saveJv = () => act.run(() => api(`/tenders/${t.id}/rules/${r.id}`, { method: "PUT", json: { params: { jv: clean(jv) } } }), reload);
-  const isJvBid = t.bidder_type === "jv" && !r.rule_type.startsWith("jv_") && r.rule_type !== "document_present";
+  const isJvBid = t.bidder_type === "jv" && !r.rule_type.startsWith("jv_");
   return (
     <>
       <tr>
-        <td className="max-w-md">{r.explanation}{r.low_confidence && <div className="text-xs text-gap">Low-confidence reading: re-enter the values from the source before confirming.</div>}</td>
+        <td className="max-w-md">{r.explanation}{typeof r.params.similar_definition === "string" && <div className="text-xs text-muted">Similar work means: {r.params.similar_definition}</div>}{r.low_confidence && <div className="text-xs text-gap">Low-confidence reading: re-enter the values from the source before confirming.</div>}</td>
         <td className="max-w-sm text-xs text-muted">{r.requirement ? <>Clause {r.requirement.clause_no || "?"}, page {(r.requirement.page_index ?? 0) + 1}<div className="line-clamp-2">{r.requirement.excerpt}</div></> : "Manual"}</td>
         <td><Status s={r.status} /><div className="text-xs text-muted">v{r.version}</div></td>
         <td>{canApprove && <Button kind="ghost" onClick={() => setOpen(!open)} aria-expanded={open}>{r.status === "approved" ? "Edit" : "Review"}</Button>}</td>
@@ -82,7 +97,7 @@ function RuleRow({ t, r, reload, canApprove }: { t: Tender; r: Rule; reload: () 
           <div className="flex flex-wrap items-end gap-3">
             {keys.map((k) => (
               <label key={k} className="text-xs">{k.replace(/_/g, " ")}
-                <input className={`${inputCls} mt-1 w-40`} value={vals[k]} placeholder={r.low_confidence ? "re-enter" : ""} onChange={(e) => setVals({ ...vals, [k]: e.target.value })} />
+                <input className={`${inputCls} mt-1 ${["dimensions", "keywords", "work", "work_nature"].includes(k) ? "w-72" : "w-40"}`} value={vals[k]} placeholder={r.low_confidence ? "re-enter" : HINTS[k] || ""} title={HINTS[k]} onChange={(e) => setVals({ ...vals, [k]: e.target.value })} />
                 {k === "threshold" || k === "min" || k === "amount" ? <span className="block text-muted">{vals[k] && inr(vals[k], 0)}</span> : null}
               </label>
             ))}
@@ -96,8 +111,10 @@ function RuleRow({ t, r, reload, canApprove }: { t: Tender; r: Rule; reload: () 
                   <option value="lead_only">Lead member alone must meet it</option>
                   <option value="each_member">Every member must meet it</option>
                   <option value="any_member">Any one member must meet it</option>
-                </select></label>
-              {jv.mode === "aggregate_sum" && <>
+                  {r.rule_type === "similar_work" && <option value="member_scaled">Each member meets its % share of the value</option>}
+                </select>
+                {sugg && !r.params.jv && <span className="mt-1 block text-teal">Pre-filled from the tender's JV clause ({sugg.basis}). Confirm or change.</span>}</label>
+              {(jv.mode === "aggregate_sum" || jv.mode === "member_scaled") && <>
                 <label className="text-xs">Lead minimum % of threshold<input className={`${inputCls} mt-1 w-28`} value={jv.lead_min_pct} onChange={(e) => setJv({ ...jv, lead_min_pct: e.target.value })} /></label>
                 <label className="text-xs">Each other member minimum %<input className={`${inputCls} mt-1 w-28`} value={jv.member_min_pct} onChange={(e) => setJv({ ...jv, member_min_pct: e.target.value })} /></label>
               </>}
@@ -112,12 +129,18 @@ function RuleRow({ t, r, reload, canApprove }: { t: Tender; r: Rule; reload: () 
   );
 }
 
-function EvRow({ e, tid, reload, canOverride }: { e: Ev; tid: number; reload: () => void; canOverride: boolean }) {
+type Work = { evidence_id: number; entity?: string; work: string; value: string | null; completion_date: string | null; status?: string; result: string;
+  similarity?: string; similarity_note?: string; dimensions?: Record<string, string> };
+
+function EvRow({ e, tid, reload, canOverride, canJudge }: { e: Ev; tid: number; reload: () => void; canOverride: boolean; canJudge: boolean }) {
   const [open, setOpen] = useState(false);
   const [ov, setOv] = useState({ result: "pass", rationale: "" });
   const act = useAction();
   const calc = e.calculation as Record<string, unknown>;
-  const works = (calc.works || []) as { work: string; value: string; completion_date: string; result: string }[];
+  const works = (calc.works || []) as Work[];
+  const simKey = calc.similarity_key as string | undefined;
+  const judge = (w: Work, similar: boolean | null) => act.run(() => api(`/tenders/${tid}/similarity`, { json: { evidence_id: w.evidence_id, criterion_key: simKey, similar } }), reload);
+  const dims = (calc.dimensions || []) as { name: string; min: string }[];
   return (
     <Fragment>
       <tr>
@@ -130,12 +153,25 @@ function EvRow({ e, tid, reload, canOverride }: { e: Ev; tid: number; reload: ()
       </tr>
       {open && (
         <tr><td colSpan={5} className="bg-[#fafaf7] text-sm">
-          {works.length > 0 && <table className="datagrid mb-3"><thead><tr><th>Work</th><th>Value</th><th>Completed</th><th>Assessment</th></tr></thead>
-            <tbody>{works.map((w, i) => <tr key={i}><td>{w.work}</td><td>{inr(w.value, 0)}</td><td>{w.completion_date}</td><td>{w.result}</td></tr>)}</tbody></table>}
-          <pre className="whitespace-pre-wrap break-words text-xs text-muted">{JSON.stringify(Object.fromEntries(Object.entries(calc).filter(([k]) => k !== "works")), null, 2)}</pre>
+          {typeof calc.work_nature === "string" && <p className="mb-2">Kind of work required: <span className="font-medium">{calc.work_nature}</span>
+            {dims.length > 0 && <> · sizes: {dims.map((d) => `${d.name} ≥ ${d.min} m`).join(", ")}</>}
+            {simKey && <span className="block text-xs text-muted">Whether a work is similar is decided per tender. Your decision applies to this criterion of this tender only.</span>}</p>}
+          <ErrorBox error={act.error} />
+          {works.length > 0 && <table className="datagrid mb-3"><thead><tr><th>Work</th><th>Value</th><th>Completed</th><th>Sizes on record</th><th>Assessment</th>{simKey && canJudge && <th>Similar for this tender?</th>}</tr></thead>
+            <tbody>{works.map((w, i) => <tr key={i}>
+              <td>{w.work}{w.entity && <div className="text-xs text-muted">{w.entity}</div>}</td><td>{inr(w.value, 0)}</td>
+              <td>{w.completion_date}{w.status && w.status !== "completed" && <div className="text-xs text-muted">{w.status.replace(/_/g, " ")}</div>}</td>
+              <td className="text-xs">{w.dimensions ? Object.entries(w.dimensions).map(([k, v]) => `${k} ${v} m`).join(", ") || "none recorded" : ""}</td>
+              <td>{w.result}{w.similarity_note && w.result !== w.similarity_note && !w.result.includes(w.similarity_note) && <div className="text-xs text-muted">{w.similarity_note}</div>}</td>
+              {simKey && canJudge && <td className="whitespace-nowrap">
+                {w.similarity === "confirmed" || w.similarity === "rejected"
+                  ? <><span className="text-xs">{w.similarity === "confirmed" ? "Similar" : "Not similar"}</span> <Button kind="ghost" onClick={() => judge(w, null)} disabled={act.busy}>Undo</Button></>
+                  : <><Button kind="secondary" onClick={() => judge(w, true)} disabled={act.busy}>Similar</Button> <Button kind="ghost" onClick={() => judge(w, false)} disabled={act.busy}>Not similar</Button></>}
+              </td>}
+            </tr>)}</tbody></table>}
+          <pre className="whitespace-pre-wrap break-words text-xs text-muted">{JSON.stringify(Object.fromEntries(Object.entries(calc).filter(([k]) => !["works", "dimensions", "work_nature", "similarity_key"].includes(k))), null, 2)}</pre>
           {canOverride && e.result !== "pass" && (
             <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-line pt-3">
-              <ErrorBox error={act.error} />
               <select aria-label="Override result" className={`${inputCls} w-40`} value={ov.result} onChange={(x) => setOv({ ...ov, result: x.target.value })}>
                 <option value="pass">Pass</option><option value="not_applicable">Not applicable</option></select>
               <input aria-label="Rationale" className={`${inputCls} max-w-md`} placeholder="Rationale (at least 20 characters, e.g. department clarification ref.)" value={ov.rationale} onChange={(x) => setOv({ ...ov, rationale: x.target.value })} />

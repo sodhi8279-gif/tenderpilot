@@ -6,7 +6,12 @@ import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent  # backend/
+BASE_DIR = Path(__file__).resolve().parent.parent  # backend/ (or the bundle folder in the installed app)
+# Where the database, stored files and secret key live. The installed app points this at
+# %LOCALAPPDATA%\TenderPilot\data so program files and user data stay separate.
+DATA_DIR = Path(os.environ.get("DATA_DIR") or BASE_DIR / "data")
+FRONTEND_DIST = Path(os.environ.get("FRONTEND_DIST") or BASE_DIR.parent / "frontend" / "dist")
+BACKUP_DIR = Path(os.environ.get("BACKUP_DIR") or BASE_DIR.parent / "backups")
 
 
 def _env(name: str, default: str) -> str:
@@ -15,8 +20,8 @@ def _env(name: str, default: str) -> str:
 
 @dataclass
 class Settings:
-    database_url: str = field(default_factory=lambda: _env("DATABASE_URL", f"sqlite:///{(BASE_DIR / 'data' / 'tenderpilot.db').as_posix()}"))
-    storage_dir: Path = field(default_factory=lambda: Path(_env("STORAGE_DIR", str(BASE_DIR / "data" / "storage"))))
+    database_url: str = field(default_factory=lambda: _env("DATABASE_URL", f"sqlite:///{(DATA_DIR / 'tenderpilot.db').as_posix()}"))
+    storage_dir: Path = field(default_factory=lambda: Path(_env("STORAGE_DIR", str(DATA_DIR / "storage"))))
     secret_key: str = field(default_factory=lambda: _env("SECRET_KEY", ""))
     token_hours: int = field(default_factory=lambda: int(_env("TOKEN_HOURS", "12")))
     max_upload_mb: int = field(default_factory=lambda: int(_env("MAX_UPLOAD_MB", "200")))
@@ -30,6 +35,11 @@ class Settings:
     ai_max_tokens: int = field(default_factory=lambda: int(_env("AI_MAX_TOKENS", "4000")))
     tesseract_cmd: str = field(default_factory=lambda: _env("TESSERACT_CMD", ""))
     ocr_languages: str = field(default_factory=lambda: _env("OCR_LANGUAGES", "eng+hin"))
+    # Language data folder. Default: backend/data/tessdata when present (user-writable; holds eng+hin),
+    # otherwise Tesseract's own tessdata folder.
+    tessdata_dir: str = field(default_factory=lambda: _env("TESSDATA_DIR", ""))
+    soffice_cmd: str = field(default_factory=lambda: _env("SOFFICE_CMD", ""))
+    convert_timeout_s: int = field(default_factory=lambda: int(_env("CONVERT_TIMEOUT_S", "180")))
     run_worker_in_process: bool = field(default_factory=lambda: _env("RUN_WORKER", "1") == "1")
     low_confidence_threshold: float = 0.8
     cors_origins: str = field(default_factory=lambda: _env("CORS_ORIGINS", "http://localhost:5173"))
@@ -38,8 +48,10 @@ class Settings:
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         if self.database_url.startswith("sqlite:///"):
             Path(self.database_url.replace("sqlite:///", "")).parent.mkdir(parents=True, exist_ok=True)
+        if not self.tessdata_dir and (DATA_DIR / "tessdata").is_dir():
+            self.tessdata_dir = str(DATA_DIR / "tessdata")
         if not self.secret_key:
-            key_file = BASE_DIR / "data" / ".secret_key"
+            key_file = DATA_DIR / ".secret_key"
             key_file.parent.mkdir(parents=True, exist_ok=True)
             if key_file.exists():
                 self.secret_key = key_file.read_text().strip()

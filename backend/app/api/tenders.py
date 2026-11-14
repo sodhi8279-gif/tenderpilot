@@ -235,7 +235,7 @@ def list_documents(tender_id: int, ctx: Ctx = Depends(get_ctx)):
     for d in ctx.db.scalars(select(SourceDocument).where(SourceDocument.tender_id == t.id).order_by(SourceDocument.id)):
         counts = dict(ctx.db.execute(select(SourcePage.status, func.count()).where(SourcePage.document_id == d.id)
                                      .group_by(SourcePage.status)).all())
-        out.append({**to_dict(d, {"storage_key"}), "page_status": counts})
+        out.append({**to_dict(d, {"storage_key", "converted_storage_key"}), "page_status": counts})
     return out
 
 
@@ -259,11 +259,11 @@ def classify(tender_id: int, doc_id: int, body: ClassifyIn, ctx: Ctx = Depends(g
     if d.status == "needs_classification":
         d.status = "processed"
     jobs.enqueue(ctx.db, kind="extract_requirements", org_id=ctx.org_id, tender_id=t.id, document_id=d.id,
-                 key=f"extract:{d.id}:{d.sha256}:{d.doc_class}")
+                 key=jobs.extract_key(d))
     audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="document.classified", subject_type="source_document",
           subject_id=d.id, tender_id=t.id, doc_class=d.doc_class)
     ctx.db.commit()
-    return to_dict(d, {"storage_key"})
+    return to_dict(d, {"storage_key", "converted_storage_key"})
 
 
 class PasswordIn(BaseModel):

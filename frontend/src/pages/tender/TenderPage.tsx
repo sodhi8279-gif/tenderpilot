@@ -6,6 +6,7 @@ import { Button, cx, ErrorBox, fmtDate, inputCls, Loading, Panel, Status, Tabs, 
 import Documents from "./Documents";
 import Clauses from "./Clauses";
 import Eligibility from "./Eligibility";
+import Qualify from "./Qualify";
 import Checklist from "./Checklist";
 import Studio from "./Studio";
 import Estimate from "./Estimate";
@@ -23,7 +24,7 @@ export type Tender = {
 // The guided journey from the brief; each step links to the tab where it is done.
 const STEPS: [string, string, string][] = [
   ["create", "Create tender", "overview"], ["upload", "Upload all volumes", "documents"], ["verify_extraction", "Verify extraction", "documents"],
-  ["review_clauses", "Review clauses and amendments", "clauses"], ["choose_bidder", "Choose bidder or JV", "overview"],
+  ["review_clauses", "Review clauses and amendments", "clauses"], ["choose_bidder", "Choose bidder or JV", "qualify"],
   ["eligibility", "Assess eligibility", "eligibility"], ["collect_evidence", "Collect evidence", "checklist"],
   ["technical", "Prepare technical response", "studio"], ["estimate", "Estimate and approve prices", "estimate"],
   ["generate_forms", "Generate forms", "studio"], ["sign_certify", "Sign or certify externally", "studio"],
@@ -31,7 +32,7 @@ const STEPS: [string, string, string][] = [
   ["preflight", "Run preflight", "package"], ["export", "Export submission files", "package"], ["receipt", "Record portal receipt", "package"],
 ];
 
-const TABS: [string, string][] = [["overview", "Command centre"], ["documents", "Documents"], ["clauses", "Clauses"], ["eligibility", "Eligibility"],
+const TABS: [string, string][] = [["overview", "Command centre"], ["documents", "Documents"], ["clauses", "Clauses"], ["qualify", "How to qualify"], ["eligibility", "Eligibility"],
   ["checklist", "Checklist"], ["studio", "Document studio"], ["estimate", "BOQ and quote"], ["package", "Envelopes and export"]];
 
 export default function TenderPage() {
@@ -62,6 +63,7 @@ export default function TenderPage() {
         {tab === "overview" && <Overview t={d} reload={t.reload} />}
         {tab === "documents" && <Documents tid={tid} onChange={t.reload} />}
         {tab === "clauses" && <Clauses tid={tid} onChange={t.reload} />}
+        {tab === "qualify" && <Qualify t={d} onChange={t.reload} />}
         {tab === "eligibility" && <Eligibility t={d} onChange={t.reload} />}
         {tab === "checklist" && <Checklist t={d} onChange={t.reload} />}
         {tab === "studio" && <Studio tid={tid} />}
