@@ -321,6 +321,71 @@ _CAP_RX = re.compile(r"(\d+(?:\.\d+)?)\s*(cum\s*/\s*h(?:ou)?r|cum\s+per\s+hour|m
 _SECTION_STOP = re.compile(r"^\s*(?:\(?[A-H]\)\s+[A-Z]|(?i:in\s+case\s+of\s+(?:a\s+)?(?:joint|JV|consortium)|notes?\s*:?\s*$))")
 
 
+# ---- tables that continue on the next page
+_PAGE_NOISE = re.compile(r"^\s*(?:page\s*(?:no\.?\s*)?\d+(?:\s*(?:of|/)\s*\d+)?|-\s*\d+\s*-|\d{1,4}|\(\s*\d+\s*\)|"
+                         r"\(?contd\.?\)?|continued|\.{3,}|cont(?:inued)?\s+(?:on|from)\s+(?:next|previous)\s+page)\s*$", re.I)
+_COL_HEADER = re.compile(r"^\s*(?:s\.?\s*no\.?|sl\.?\s*no\.?|sr\.?\s*no\.?|serial\s+no\.?|item\s+no\.?)(?=\s|$)|"
+                         r"^\s*(?:designation|description|name\s+of\s+(?:post|equipment|item)|post|position|type\s+of\s+equipment)"
+                         r"\s+(?:minimum\s+)?(?:qualification|capacity|nos?\.?|number|quantity|experience)", re.I)
+
+
+def _is_stop(line: str) -> bool:
+    return bool(any(h.search(line) for h in _ANY_HDR) or _HEADING_LINE.match(line) or _TOP_CLAUSE.match(line)
+                or _SECTION_STOP.match(line))
+
+
+def open_section_at_end(text: str) -> tuple[str, str | None] | None:
+    """If a personnel / machinery / quantity list is still running at the bottom of the page, return
+    (its heading line, its last item line). None when every list on the page is closed."""
+    lines = [ln for ln in text.replace("\r", "").split("\n")]
+    while lines and (not lines[-1].strip() or _PAGE_NOISE.match(lines[-1])):
+        lines.pop()  # footer: page numbers, "contd."
+    best: tuple[int, str] | None = None
+    for hdr in _ANY_HDR:
+        for i, ln in enumerate(lines):
+            if hdr.search(ln) and (best is None or i > best[0]):
+                best = (i, ln)
+    if best is None:
+        return None
+    i, head = best
+    last = None
+    for ln in lines[i + 1:]:
+        if not ln.strip() or _PAGE_NOISE.match(ln) or _COL_HEADER.match(ln):
+            continue
+        if _is_stop(ln):
+            return None
+        last = ln
+    return head, last
+
+
+def leading_rows(text: str, limit: int = 30) -> list[str]:
+    """Rows at the top of a page that continue a list from the previous page (stops at the next heading)."""
+    out: list[str] = []
+    blanks = 0
+    for ln in text.replace("\r", "").split("\n")[:limit + 15]:
+        if not ln.strip():
+            if out:
+                blanks += 1
+                if blanks >= 2:
+                    break
+            continue
+        if _PAGE_NOISE.match(ln) or _COL_HEADER.match(ln):
+            continue  # running header, page number or the table's repeated column headings
+        if _is_stop(ln):
+            break
+        out.append(ln)
+        blanks = 0
+        if len(out) >= limit:
+            break
+    return out
+
+
+def is_fragment(line: str) -> bool:
+    """A line that finishes a row cut by the page break: no list marker and starts in lower case or with 'with'/'and'."""
+    body = line.strip()
+    return bool(body) and not _MARKER.match(line) and (body[0].islower() or bool(re.match(r"(?:with|and|having|of)\b", body, re.I)))
+
+
 def _strip_marker(line: str) -> str:
     return _MARKER.sub("", line, count=1).strip()
 

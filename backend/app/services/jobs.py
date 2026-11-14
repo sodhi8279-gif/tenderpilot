@@ -22,7 +22,7 @@ from ..db import SessionLocal
 from ..models import ExtractionJob, Organization, SourceAnchor, SourceDocument, SourcePage, Tender, TenderVersion
 from ..storage import sha256, storage
 from . import ai, convert, ingest, secretbox
-from .extract import READER_VERSION, extract_from_page, find_bbox, merge_candidates
+from .extract import READER_VERSION, extract_continuations, extract_from_page, find_bbox, merge_candidates
 from .requirements import apply_candidates, bump_tender_version, sync_tender_facts
 
 log = logging.getLogger("tenderpilot.jobs")
@@ -351,6 +351,7 @@ def _extract(db: Session, job: ExtractionJob) -> None:
         _check_cancel(db, job)
         cands.extend(extract_from_page(sp.text or "", sp.page_index, sp.confidence))
         job.progress_done += 1
+    cands.extend(extract_continuations([(sp.text or "", sp.page_index, sp.confidence) for sp in pages], cands))
     merged = merge_candidates(cands)
     labels = {sp.page_index: sp.page_label for sp in pages}
     bboxes: dict[int, list | None] = {}
