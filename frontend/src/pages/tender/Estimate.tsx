@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, download, inr } from "../../api";
 import { useMe } from "../../App";
+import Scenarios from "./Scenarios";
 import { Button, Empty, ErrorBox, fmtDate, inputCls, Loading, Notice, Panel, Status, useAction, useLoad } from "../../ui";
 
 type Item = { id: number; row_index: number; item_code: string; description: string; unit: string; quantity: string; rate_cell: string; trade: string;
@@ -163,11 +164,8 @@ function Quotes({ tid, boq }: { tid: number; boq: BOQ }) {
   const qs = useLoad<Quote[]>(() => api(`/tenders/${tid}/quotes`), [tid]);
   const act = useAction();
   const [comment, setComment] = useState("");
-  const [scen, setScen] = useState<null | { base: Record<string, string>; cases: { name: string; cost: string; margin: string; margin_pct_of_price: string; notes: string[] }[] }>(null);
+  const [scenFor, setScenFor] = useState<number | null>(null);
   const decide = (q: Quote, stage: string, decision: string) => act.run(() => api(`/tenders/${tid}/quotes/${q.id}/${stage}`, { json: { decision, comment: comment || null, row_version: q.row_version } }), qs.reload);
-  const runScen = (q: Quote) => act.run(async () => setScen(await api(`/tenders/${tid}/quotes/${q.id}/scenarios`, { json: { interest_pct_pa: "10", cases: [
-    { name: "Steel and cement +8%", rate_change_pct: { civil: "8" } }, { name: "Pumps and panels +5%", rate_change_pct: { mechanical: "5", electrical: "5" } },
-    { name: "3-month delay", delay_months: "3", monthly_time_cost: "450000" }, { name: "90-day payment cycle, 5% retention", payment_cycle_days: "90", retention_pct: "5", retention_months: "12" }] } })));
   const latest = qs.data?.[0];
   return (
     <Panel title="Quote versions and approval" actions={can("price.write") && <Button onClick={() => act.run(() => api(`/tenders/${tid}/boqs/${boq.id}/quotes`, { json: {} }), qs.reload)}>Freeze current rates as a quote</Button>}>
@@ -193,7 +191,7 @@ function Quotes({ tid, boq }: { tid: number; boq: BOQ }) {
                     : <><Button onClick={() => decide(q, "approve", "approved")}>Approve quote</Button><Button kind="danger" onClick={() => decide(q, "approve", "rejected")}>Reject</Button></>)}
                   {q.status === "approved" && can("price.write") && <Button kind="secondary" onClick={() => act.run(() => api(`/tenders/${tid}/quotes/${q.id}/export`, { json: {} }), qs.reload)}>Write rates into official workbook</Button>}
                   {q.export_key && <Button kind="secondary" onClick={() => act.run(() => download(`/tenders/${tid}/quotes/${q.id}/export`, q.export_report.filename || "BOQ_priced.xlsx"))}>Download priced workbook</Button>}
-                  <Button kind="ghost" onClick={() => runScen(q)}>Scenarios</Button>
+                  <Button kind="ghost" onClick={() => setScenFor(q.id)}>Scenarios</Button>
                 </div>
               )}
               {q.export_report.ok && <p className="mt-2 text-xs text-pass">Verified: {q.export_report.cells_written} rate cells written; every other cell, formula, sheet and protection setting unchanged. {q.export_report.note}</p>}
@@ -204,12 +202,7 @@ function Quotes({ tid, boq }: { tid: number; boq: BOQ }) {
           ))}
         </div>
       )}
-      {scen && (
-        <div className="mt-4"><div className="mb-1 text-sm font-medium">Scenario comparison (assumptions shown; edit them in the API or a future release)</div>
-          <table className="datagrid"><thead><tr><th>Case</th><th>Cost</th><th>Margin</th><th>Margin % of price</th><th>Working</th></tr></thead>
-            <tbody><tr><td>Base</td><td>{inr(scen.base.cost, 0)}</td><td>{inr(scen.base.margin, 0)}</td><td></td><td></td></tr>
-              {scen.cases.map((c) => <tr key={c.name}><td>{c.name}</td><td>{inr(c.cost, 0)}</td><td className={Number(c.margin) < 0 ? "text-fail" : ""}>{inr(c.margin, 0)}</td><td>{c.margin_pct_of_price}%</td><td className="text-xs text-muted">{c.notes.join("; ")}</td></tr>)}</tbody></table></div>
-      )}
+      {scenFor !== null && <Scenarios tid={tid} quoteId={scenFor} onClose={() => setScenFor(null)} />}
     </Panel>
   );
 }

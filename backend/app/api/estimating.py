@@ -369,7 +369,7 @@ def download_export(tender_id: int, quote_id: int, ctx: Ctx = Depends(get_ctx)):
 
 class ScenarioIn(BaseModel):
     interest_pct_pa: str = "10"
-    cases: list[dict]
+    cases: list[dict] = Field(max_length=20)
 
 
 @router.post("/quotes/{quote_id}/scenarios")
