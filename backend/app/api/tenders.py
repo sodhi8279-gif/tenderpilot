@@ -380,6 +380,28 @@ def job_action(tender_id: int, job_id: int, action: str, ctx: Ctx = Depends(get_
     return to_dict(j)
 
 
+@router.get("/{tender_id}/reread")
+def reread_status(tender_id: int, ctx: Ctx = Depends(get_ctx)):
+    """How many of this tender's documents were read by an older version of the tender reader."""
+    ctx.require("tender.read")
+    t = ctx.tender(tender_id)
+    from ..services.extract import READER_VERSION
+    docs = jobs.outdated_documents(ctx.db, t.id)
+    return {"reader_version": READER_VERSION, "outdated": [{"id": d.id, "filename": d.filename} for d in docs],
+            "note": "Re-reading keeps every value a reviewer has confirmed or corrected; only unreviewed readings are refreshed."}
+
+
+@router.post("/{tender_id}/reread")
+def reread_tender(tender_id: int, ctx: Ctx = Depends(get_ctx)):
+    """Read this tender's documents again with the latest reader (only when the user asks)."""
+    ctx.require("documents.write")
+    t = ctx.tender(tender_id)
+    n = jobs.requeue_outdated_extractions(ctx.db, t.id)
+    audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="tender.reread", subject_type="tender", subject_id=t.id, tender_id=t.id)
+    ctx.db.commit()
+    return {"queued": n}
+
+
 @router.get("/{tender_id}/completeness")
 def completeness(tender_id: int, ctx: Ctx = Depends(get_ctx)):
     ctx.require("tender.read")

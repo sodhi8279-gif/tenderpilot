@@ -21,6 +21,7 @@ export default function Documents({ tid, onChange }: { tid: number; onChange: ()
   const jobs = useLoad<{ id: number; kind: string; status: string; filename: string; progress_done: number; progress_total: number; error: string | null; attempts: number }[]>(
     () => api(`/tenders/${tid}/jobs`), [tid]);
   const comp = useLoad<{ total_pages: number; pages: Record<string, number>; possibly_missing_volumes: string[]; note: string }>(() => api(`/tenders/${tid}/completeness`), [tid]);
+  const reread = useLoad<{ reader_version: string; outdated: { id: number; filename: string }[]; note: string }>(() => api(`/tenders/${tid}/reread`), [tid]);
   const sys = useLoad<{ ocr: { available: boolean; note: string | null }; ai: { provider: string; live: boolean; data_flow: string } }>(() => api("/system"));
   const [open, setOpen] = useState<number | null>(null);
   const [cls, setCls] = useState("unclassified");
@@ -42,7 +43,7 @@ export default function Documents({ tid, onChange }: { tid: number; onChange: ()
     }
     docs.reload(); jobs.reload();
   };
-  const refresh = () => { docs.reload(); jobs.reload(); comp.reload(); onChange(); };
+  const refresh = () => { docs.reload(); jobs.reload(); comp.reload(); reread.reload(); onChange(); };
 
   return (
     <div className="space-y-5">
@@ -63,6 +64,17 @@ export default function Documents({ tid, onChange }: { tid: number; onChange: ()
             {act.busy && <span role="status" className="text-muted">Uploading…</span>}
           </div>
           <p className="mt-2 text-xs text-muted">Corrigenda and addenda change only the clauses they mention; earlier values are kept in history.</p>
+        </Panel>
+      )}
+      {reread.data && reread.data.outdated.length > 0 && (
+        <Panel title="A newer tender reader is available">
+          <p className="text-sm">{reread.data.outdated.length} document(s) in this tender were read by an older version of the reader:
+            {" "}{reread.data.outdated.map((d) => d.filename).join(", ")}. They stay exactly as they are until you choose to re-read them.</p>
+          <p className="mt-1 text-xs text-muted">{reread.data.note}</p>
+          {can("documents.write") && (
+            <Button className="mt-3" kind="secondary" disabled={act.busy}
+              onClick={() => act.run(() => api(`/tenders/${tid}/reread`, { method: "POST" }), refresh)}>Re-read with the latest reader</Button>
+          )}
         </Panel>
       )}
       {comp.data && comp.data.total_pages > 0 && (

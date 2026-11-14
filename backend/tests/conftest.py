@@ -10,6 +10,7 @@ from pathlib import Path
 _TMP = Path(tempfile.mkdtemp(prefix="tenderpilot-test-"))
 os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'test.db').as_posix()}"
 os.environ["STORAGE_DIR"] = str(_TMP / "storage")
+os.environ["DATA_DIR"] = str(_TMP)  # keeps test secret keys and pre-update copies out of backend/data
 os.environ["RUN_WORKER"] = "0"  # tests drain the queue explicitly
 os.environ["SECRET_KEY"] = "test-secret-key-not-for-production-0123456789"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

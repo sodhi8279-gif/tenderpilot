@@ -22,17 +22,25 @@ log = logging.getLogger("tenderpilot")
 _worker = None
 
 
+class _SkipReread(Exception):
+    pass
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     global _worker
     migrate()
-    try:  # documents read by an older reader are read again (reviewed values are kept)
+    try:  # only when AUTO_REREAD=1: documents read by an older reader are read again (reviewed values are kept)
+        if not settings.auto_reread:
+            raise _SkipReread
         from .db import SessionLocal
         from .services.jobs import requeue_outdated_extractions
         with SessionLocal() as db:
             n = requeue_outdated_extractions(db)
         if n:
             log.info("Queued %d document(s) to be re-read by the updated tender reader", n)
+    except _SkipReread:
+        pass
     except Exception:  # noqa: BLE001  never block start-up
         log.exception("Could not queue documents for re-reading")
     if settings.run_worker_in_process:

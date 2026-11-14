@@ -45,14 +45,28 @@ def extract_key(doc: SourceDocument) -> str:
     return f"extract:{doc.id}:{doc.sha256}:{doc.doc_class}:{READER_VERSION}"
 
 
-def requeue_outdated_extractions(db: Session) -> int:
-    """At start-up: documents already read by an older reader are queued to be read again by the current one.
-    Reviewed values are kept (see apply_candidates(reread=True)); only unreviewed machine readings are refreshed."""
+def outdated_documents(db: Session, tender_id: int | None = None) -> list[SourceDocument]:
+    """Processed documents last read by an older reader version."""
+    read_before = set(db.scalars(select(ExtractionJob.document_id).where(
+        ExtractionJob.kind == "extract_requirements", ExtractionJob.status == "succeeded")))
+    q = select(SourceDocument).where(SourceDocument.status == "processed", SourceDocument.id.in_(read_before or {-1}))
+    if tender_id is not None:
+        q = q.where(SourceDocument.tender_id == tender_id)
+    return [d for d in db.scalars(q)
+            if db.scalar(select(ExtractionJob.id).where(ExtractionJob.idempotency_key == extract_key(d))) is None]
+
+
+def requeue_outdated_extractions(db: Session, tender_id: int | None = None) -> int:
+    """Queue documents read by an older reader to be read again by the current one. Runs at start-up only when
+    AUTO_REREAD=1, otherwise only when a user asks for one tender. Reviewed values are kept
+    (see apply_candidates(reread=True)); only unreviewed machine readings are refreshed."""
     n = 0
     read_before = set(db.scalars(select(ExtractionJob.document_id).where(
         ExtractionJob.kind == "extract_requirements", ExtractionJob.status == "succeeded")))
-    for doc in db.scalars(select(SourceDocument).where(SourceDocument.status == "processed",
-                                                       SourceDocument.id.in_(read_before or {-1}))):
+    q = select(SourceDocument).where(SourceDocument.status == "processed", SourceDocument.id.in_(read_before or {-1}))
+    if tender_id is not None:
+        q = q.where(SourceDocument.tender_id == tender_id)
+    for doc in db.scalars(q):
         key = extract_key(doc)
         if db.scalar(select(ExtractionJob.id).where(ExtractionJob.idempotency_key == key)) is None:
             enqueue(db, kind="extract_requirements", org_id=doc.org_id, tender_id=doc.tender_id, document_id=doc.id, key=key)
