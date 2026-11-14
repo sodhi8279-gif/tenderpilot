@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { useMe } from "../App";
 import SoftwareUpdate from "./SoftwareUpdate";
+import YourCompany from "./YourCompany";
 import { Button, cx, Empty, ErrorBox, Field, fmtDate, inputCls, Loading, Notice, Panel, useAction, useLoad } from "../ui";
 
 const ROLES = ["org_admin", "tender_manager", "technical_reviewer", "estimator", "document_coordinator", "finance_reviewer", "authorized_approver", "auditor"];
@@ -195,6 +196,7 @@ export default function Settings() {
       <h1 className="text-2xl font-semibold tracking-tight">Settings and audit</h1>
       <ErrorBox error={act.error} />
       {admin && <SoftwareUpdate />}
+      <YourCompany />
       <SystemChecks admin={admin} />
       <AiProvider admin={admin} onChange={() => { refresh(); audit.reload(); }} />
       <Panel title={`Notifications (${notes.data?.filter((n) => !n.read).length || 0} unread)`} actions={<Button kind="secondary" onClick={() => act.run(() => api("/notifications/read", { json: {} }), () => { notes.reload(); refresh(); })}>Mark all read</Button>}>

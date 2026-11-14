@@ -35,7 +35,19 @@ FIELD_CATALOG = {
     "req.commercial.emd": "EMD amount", "req.commercial.bid_validity": "Bid validity (days)",
     "req.commercial.completion_period": "Completion period", "letter.date": "Letter date",
     "quote.total": "Quoted total (financial envelope only)", "quote.total_words": "Quoted total in words (financial only)",
+    # client-firm profile (Client firms library)
+    "entity.cin": "CIN / LLPIN / registration no.", "entity.incorporation_date": "Date of incorporation",
+    "entity.udyam": "Udyam (MSME) registration no.", "entity.epf": "EPF code", "entity.esi": "ESI code",
+    "entity.email": "Bidder e-mail", "entity.phone": "Bidder phone", "entity.contact_person": "Bidder contact person",
+    "entity.bank_name": "Bidder bank", "entity.bank_branch": "Bidder bank branch", "entity.bank_account": "Bidder bank account no.",
+    "entity.bank_ifsc": "Bidder bank IFSC", "jv.lead_name": "JV lead partner",
+    # the submitting company (Settings > Your company)
+    "agency.name": "Submitting company name", "agency.address": "Submitting company address",
+    "agency.phone": "Submitting company phone", "agency.email": "Submitting company e-mail",
+    "agency.contact_person": "Submitting company contact person",
 }
+PROFILE_KEYS = ("cin", "incorporation_date", "udyam", "epf", "esi", "email", "phone", "contact_person", "bank_name",
+                "bank_branch", "bank_account", "bank_ifsc")
 
 BUILTINS = {
     "cover_letter": ("Covering letter", "technical"),
@@ -61,10 +73,19 @@ def build_context(db: Session, tender: Tender, quote=None) -> dict[str, str | No
         lead = next((m for m in jv.members if m.role == "lead"), None)
         ent = db.get(LegalEntity, lead.legal_entity_id) if lead else ent
         ctx["jv.name"] = jv.name
+        ctx["jv.lead_name"] = ent.legal_name if ent else None
         ctx["jv.members"] = "; ".join(f"{db.get(LegalEntity, m.legal_entity_id).legal_name} ({m.role}, {m.share_pct}%)" for m in jv.members)
     if ent:
         for f in ("legal_name", "registered_address", "signatory_name", "signatory_designation", "pan", "gstin", "entity_type"):
             ctx[f"entity.{f}"] = getattr(ent, f) or None
+        for f in PROFILE_KEYS:
+            ctx[f"entity.{f}"] = (ent.profile or {}).get(f) or None
+    from ..models import Organization
+    org = db.get(Organization, tender.org_id)
+    if org:
+        ctx["agency.name"] = org.name
+        for f in ("address", "phone", "email", "contact_person"):
+            ctx[f"agency.{f}"] = (org.profile or {}).get(f) or None
     for key in ("commercial.emd", "commercial.bid_validity", "commercial.completion_period"):
         req = db.scalar(select(Requirement).where(Requirement.tender_id == tender.id, Requirement.key == key))
         v = current_version(req) if req else None

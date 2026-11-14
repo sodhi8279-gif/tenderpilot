@@ -40,7 +40,11 @@ export default function SoftwareUpdate() {
     return () => clearInterval(h);
   }, [restarting]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {  // opened from the sidebar "Updates" link: bring the panel into view
+    if (window.location.hash === "#software-update") document.getElementById("software-update")?.scrollIntoView({ block: "start" });
+  }, [!!s]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!s) return <Panel title="Software update">{st.error ? <ErrorBox error={st.error} onRetry={st.reload} /> : <Loading />}</Panel>;
+  const nothingPublished = !s.latest && !!s.error && s.error.startsWith("No version has been published");
   const check = () => act.run(async () => st.setData(await api("/update/check", { method: "POST" })));
   const download = () => act.run(async () => st.setData(await api("/update/download", { method: "POST" })));
   const install = () => act.run(async () => {
@@ -49,16 +53,19 @@ export default function SoftwareUpdate() {
   });
 
   return (
+    <div id="software-update" className="scroll-mt-4">
     <Panel title="Software update" actions={<Button kind="secondary" disabled={act.busy || s.phase === "downloading" || !!restarting} onClick={check}>Check for updates</Button>}>
-      <ErrorBox error={act.error || s.error} />
+      <ErrorBox error={act.error || (nothingPublished ? null : s.error)} />
       <div className="space-y-3 text-sm">
         <div>Installed version: <strong>{s.current_version}</strong>
           {s.checked_at && <span className="text-muted"> · last checked {fmtDate(new Date(s.checked_at * 1000).toISOString())}</span>}</div>
 
         {restarting ? (
           <Notice>{restarting} This page reloads when the new version is ready. Your data was backed up to: {s.backup}</Notice>
+        ) : nothingPublished ? (
+          <p className="text-pass">You have the latest version. No newer version has been published yet.</p>
         ) : !s.latest ? (
-          <p className="text-muted">Not checked yet.</p>
+          <p className="text-muted">{s.checked_at ? "Could not check for updates. Try again." : "Not checked yet."}</p>
         ) : !s.update_available ? (
           <p className="text-pass">TenderPilot is up to date.</p>
         ) : (
@@ -96,5 +103,6 @@ export default function SoftwareUpdate() {
           the backups folder, and the database is copied again before any change to it.</p>
       </div>
     </Panel>
+    </div>
   );
 }

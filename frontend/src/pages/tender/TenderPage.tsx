@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { t as tr } from "../../i18n";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api";
 import { useMe } from "../../App";
 import { Button, cx, ErrorBox, fmtDate, inputCls, Loading, Panel, Status, Tabs, useAction, useLoad } from "../../ui";
 import Documents from "./Documents";
+import Participants from "./Participants";
 import Clauses from "./Clauses";
 import Eligibility from "./Eligibility";
 import Qualify from "./Qualify";
@@ -121,6 +122,7 @@ function Overview({ t, reload }: { t: Tender; reload: () => void }) {
           <div className="text-xs text-muted">Next action</div>
           <div className="text-[1.05rem] font-medium">{t.next_action}</div>
         </div>
+        <Participants tid={t.id} rowVersion={t.row_version} reload={reload} />
         <TenderRoute t={t} reload={reload} />
         <Panel title={`Blocking issues (${r.blockers.length})`}>
           {blockers.length === 0 ? <p className="text-sm text-pass">No blocking issues in the reviewed rules and checklist.</p> : (
@@ -132,7 +134,7 @@ function Overview({ t, reload }: { t: Tender; reload: () => void }) {
         </Panel>
       </div>
       <div className="space-y-5">
-        {can("tender.write") && <BidderAndCutoff t={t} reload={reload} />}
+        {can("tender.write") && <Cutoff t={t} reload={reload} />}
         <Panel title="Amendment history">
           <ol className="space-y-2 text-sm">
             {t.versions.map((v) => <li key={v.number}><span className="font-medium">Version {v.number}</span>: {v.reason}<div className="text-xs text-muted">{fmtDate(v.created_at)}</div></li>)}
@@ -143,49 +145,21 @@ function Overview({ t, reload }: { t: Tender; reload: () => void }) {
   );
 }
 
-function BidderAndCutoff({ t, reload }: { t: Tender; reload: () => void }) {
-  const ents = useLoad<{ id: number; legal_name: string }[]>(() => api("/entities"));
-  const jvs = useLoad<{ id: number; name: string }[]>(() => api("/jvs"));
-  const [f, setF] = useState({ bidder_type: t.bidder_type, bidder: String((t.bidder_type === "jv" ? t.jv_id : t.bidder_entity_id) || ""),
-    cutoff: t.qualification_cutoff || "", source: t.qualification_cutoff_source || "" });
+function Cutoff({ t, reload }: { t: Tender; reload: () => void }) {
+  const [f, setF] = useState({ cutoff: t.qualification_cutoff || "", source: t.qualification_cutoff_source || "" });
   const act = useAction();
-  // Companies and JVs are added in the vault, often in another tab: refresh the lists when the user comes back.
-  useEffect(() => {
-    const again = () => { if (document.visibilityState === "visible") { ents.reload(); jvs.reload(); } };
-    window.addEventListener("focus", again);
-    document.addEventListener("visibilitychange", again);
-    return () => { window.removeEventListener("focus", again); document.removeEventListener("visibilitychange", again); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const options = f.bidder_type === "jv" ? jvs.data?.map((j) => [j.id, j.name] as const) : ents.data?.map((x) => [x.id, x.legal_name] as const);
   const save = () => act.run(() => api(`/tenders/${t.id}`, { method: "PATCH", json: {
-    row_version: t.row_version, bidder_type: f.bidder_type,
-    bidder_entity_id: f.bidder_type === "entity" && f.bidder ? Number(f.bidder) : null,
-    jv_id: f.bidder_type === "jv" && f.bidder ? Number(f.bidder) : null,
-    ...(f.cutoff ? { qualification_cutoff: f.cutoff, qualification_cutoff_source: f.source } : {}) } }), reload);
+    row_version: t.row_version, ...(f.cutoff ? { qualification_cutoff: f.cutoff, qualification_cutoff_source: f.source } : {}) } }), reload);
   return (
-    <Panel title="Bidder and qualification date">
-      <ErrorBox error={act.error || ents.error || jvs.error} onRetry={ents.error || jvs.error ? () => { ents.reload(); jvs.reload(); } : undefined} />
+    <Panel title="Qualification date">
+      <ErrorBox error={act.error} />
       <div className="space-y-3 text-sm">
-        <select aria-label="Bidder type" className={inputCls} value={f.bidder_type} onChange={(e) => setF({ ...f, bidder_type: e.target.value, bidder: "" })}>
-          <option value="entity">Single legal entity</option><option value="jv">Joint venture</option>
-        </select>
-        <select aria-label="Bidder" className={inputCls} value={f.bidder} onChange={(e) => setF({ ...f, bidder: e.target.value })}>
-          <option value="">Not chosen</option>
-          {options?.map(([id, n]) => <option key={id} value={id}>{n}</option>)}
-        </select>
-        {options && options.length === 0 && (
-          <p className="rounded bg-[#fbeedb] px-2 py-1.5 text-[#6b3e00]">
-            {f.bidder_type === "jv"
-              ? <>No joint venture yet. Add the partner companies, then the JV, in the <Link className="font-medium underline" to="/vault">Company vault</Link> (Joint ventures tab).</>
-              : <>No company yet. Add your company in the <Link className="font-medium underline" to="/vault">Company vault</Link> (Legal entities tab); it then appears here.</>}
-          </p>
-        )}
         <label className="block"><span className="mb-1 block font-medium">Qualification cutoff date</span>
           <input type="date" className={inputCls} value={f.cutoff} onChange={(e) => setF({ ...f, cutoff: e.target.value })} /></label>
         <input aria-label="Clause defining the cutoff" placeholder="Clause that defines it, e.g. 10.5" className={inputCls}
           value={f.source} onChange={(e) => setF({ ...f, source: e.target.value })} />
         <p className="text-xs text-muted">Certificates are tested against this date, never today's date. Take it from the tender clause.</p>
-        <Button onClick={save} disabled={act.busy || (!!f.cutoff && !f.source)}>Save bidder and date</Button>
+        <Button onClick={save} disabled={act.busy || !f.cutoff || !f.source}>Save date</Button>
       </div>
     </Panel>
   );

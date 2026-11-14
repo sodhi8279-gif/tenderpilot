@@ -57,9 +57,17 @@ def _m0005_pdf_form_layout(conn) -> None:
         conn.execute(text("ALTER TABLE document_templates ADD COLUMN layout JSON"))
 
 
+def _m0006_firm_profiles(conn) -> None:
+    """Profile details for client firms and for the submitting company. Additive: two new nullable columns."""
+    insp = inspect(conn)
+    for table in ("legal_entities", "organizations"):
+        if "profile" not in {c["name"] for c in insp.get_columns(table)}:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN profile JSON"))
+
+
 MIGRATIONS = [("0001_baseline", _m0001_baseline), ("0002_integrations", _m0002_integrations),
               ("0003_similarity_links", _m0003_similarity_links), ("0004_evidence_derivatives", _m0004_evidence_derivatives),
-              ("0005_pdf_form_layout", _m0005_pdf_form_layout)]
+              ("0005_pdf_form_layout", _m0005_pdf_form_layout), ("0006_firm_profiles", _m0006_firm_profiles)]
 
 
 def pending_migrations() -> list[str]:

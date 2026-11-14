@@ -1,6 +1,6 @@
 # Start here: TenderPilot
 
-TenderPilot helps your team study a tender, check eligibility against your own company records, prepare the forms and the priced BOQ, and assemble the files to upload to the portal. It runs on your own computer, and your documents stay on it.
+TenderPilot helps a bid-submission company prepare tenders for its client firms: study a tender, check eligibility against the bidding firm's records (or the JV partners' records), prepare the forms and the priced BOQ, and assemble the files to upload to the portal. It runs on your own computer, and your documents stay on it.
 
 ## 1. Install (recommended)
 
@@ -35,11 +35,11 @@ After installing, open the Start menu and click **TenderPilot** (or **TenderPilo
 
 | Step | Where | What you do |
 |---|---|---|
-| 1 | Company vault | Add your legal entities and upload certificates: turnover, completion certificates, PAN, GST, ISO, solvency. Type the values exactly as printed, then a reviewer clicks **Verify**. |
+| 1 | Client firms | Add each firm you bid for, once: profile, then its documents (turnover, completion certificates, PAN, GST, registrations, machinery, personnel). Type values exactly as printed; a reviewer clicks **Verify**. The library is reused for every tender. |
 | 2 | Tenders, then New tender | Enter the name of work and tender ID, and upload **all** tender volumes and corrigenda. |
 | 3 | Documents tab | Wait for processing. Every page is listed as processed, unreadable, duplicate and so on. Choose a type for any file marked "Choose type". |
 | 4 | Clauses tab | Click each requirement to see the highlighted source page. Confirm it, correct the value, or reject it. |
-| 5 | Command centre | Choose the bidder and enter the qualification cutoff date from the tender clause. |
+| 5 | Command centre | Under **Bidding firm(s)** choose **Single firm** or **Joint venture** and pick the firm(s) from the library (lead partner and shares for a JV). Enter the qualification cutoff date from the tender clause. |
 | 6 | Eligibility tab | Confirm each rule, then click **Evaluate now**. The table shows pass/fail with the full working and what is missing. |
 | 7 | Checklist tab | Link a vault document to each item and accept it. |
 | 8 | Document studio | Generate cover letters and forms. Print and sign them (or use your DSC), then upload the signed PDF. |

@@ -174,8 +174,22 @@ def test_full_journey(server):
         page.wait_for_load_state("networkidle")
         snap("08-envelopes")
 
+        # client firms: library, a firm's page with its credential tabs
+        page.get_by_role("navigation", name="Main").get_by_role("link", name="Client firms").click()
+        card = page.get_by_role("link", name=re.compile("Demo Infra Projects Private Limited"))
+        expect(card).to_be_visible()
+        snap("09a-client-firms")
+        card.click()
+        expect(page.get_by_role("heading", name="Identity and registrations")).to_be_visible()
+        page.get_by_role("tab", name=re.compile(r"^Financials")).click()
+        expect(page.get_by_role("heading", name="Turnover by financial year")).to_be_visible()
+        snap("09b-firm-financials")
+        page.get_by_role("tab", name=re.compile(r"^Tenders")).click()
+        expect(page.get_by_role("link", name="10 MLD WTP at Demo Town (SYNTHETIC)")).to_be_visible()
+
         # vault: clean up a scan
-        page.get_by_role("link", name="Company vault").click()
+        page.get_by_role("navigation", name="Main").get_by_role("link", name="Client firms").click()
+        page.get_by_role("tab", name="All documents").click()
         page.get_by_role("button", name="Clean up scan").first.click()
         expect(page.get_by_alt_text("Preview of the cleaned page")).to_be_visible()
         page.get_by_role("button", name="Rotate right").click()
@@ -183,9 +197,25 @@ def test_full_journey(server):
         expect(page.get_by_text("Cleaned copies")).to_be_visible()
         snap("09-vault-scan")
 
+        # a JV of two library firms on the tender, credentials shown at once
+        page.get_by_role("navigation", name="Main").get_by_role("link", name="Tenders").click()
+        page.get_by_role("link", name="10 MLD WTP at Demo Town (SYNTHETIC)").click()
+        panel = page.get_by_role("heading", name="Bidding firm(s)").locator("xpath=../..")
+        panel.get_by_role("button", name="Change").click()
+        panel.get_by_role("radio", name="Joint venture (JV)").click()
+        panel.get_by_label("Partner 1").select_option(label="Demo Infra Projects Private Limited (SYNTHETIC)")
+        panel.get_by_label("Share 1").fill("74")
+        firms = [o for o in panel.get_by_label("Partner 2").locator("option").all_inner_texts() if "Demo Infra" not in o and "Choose" not in o]
+        panel.get_by_label("Partner 2").select_option(label=firms[0])
+        panel.get_by_label("Share 2").fill("26")
+        panel.get_by_role("button", name="Save bidding firm(s)").click()
+        expect(panel.get_by_text("Lead partner · 74%")).to_be_visible()
+        snap("09c-tender-jv")
+
         # Hindi labels
         page.get_by_role("button", name="हिन्दी").click()
         expect(page.get_by_role("link", name="निविदाएँ")).to_be_visible()
+        expect(page.get_by_role("link", name="क्लाइंट फ़र्में")).to_be_visible()
         page.get_by_role("link", name="निविदाएँ").click()
         expect(page.get_by_role("heading", name="निविदाएँ")).to_be_visible()
         snap("10-hindi")

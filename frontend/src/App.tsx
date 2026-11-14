@@ -7,6 +7,7 @@ import Portfolio from "./pages/Portfolio";
 import NewTender from "./pages/NewTender";
 import TenderPage from "./pages/tender/TenderPage";
 import Vault from "./pages/Vault";
+import FirmPage from "./pages/FirmPage";
 import Settings from "./pages/Settings";
 
 export type Me = { user: { id: number; name: string; email: string }; org: { id: number; name: string; allow_external_ai: boolean };
@@ -63,7 +64,7 @@ function Login() {
 
 const NAV: [string, string, string][] = [
   ["/", "Tenders", "M4 5h16M4 12h16M4 19h10"],
-  ["/vault", "Company vault", "M5 4h14v16H5zM9 8h6M9 12h6"],
+  ["/vault", "Client firms", "M5 4h14v16H5zM9 8h6M9 12h6"],
   ["/settings", "Settings & audit", "M12 8a4 4 0 100 8 4 4 0 000-8zM12 2v3M12 19v3M2 12h3M19 12h3"],
 ];
 
@@ -73,6 +74,8 @@ function Shell() {
   const load = () => api<Me>("/me").then(setMe).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
   const [newVersion, setNewVersion] = useState<string | null>(null);
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => { fetch("/api/health").then((r) => r.json()).then((j) => setVersion(j.version || null)).catch(() => undefined); }, []);
   useEffect(() => {  // administrators: quiet check (the server asks GitHub at most every 12 hours)
     if (!me?.permissions.includes("org.admin")) return;
     api("/update/check?force=false", { method: "POST" })
@@ -107,6 +110,10 @@ function Shell() {
             <button className="mt-1 underline hover:text-white" onClick={() => { setToken(null); window.location.assign("/login"); }}>{t("Sign out")}</button>
             <button className="mt-1 ml-3 block underline hover:text-white md:ml-0" lang={lang === "hi" ? "en" : "hi"}
               onClick={() => setLang(lang === "hi" ? "en" : "hi")}>{lang === "hi" ? "English" : "हिन्दी"}</button>
+            <div className="mt-3 hidden border-t border-ink-2 pt-2 text-[#8fa3bd] md:block">
+              TenderPilot {version && `v${version}`}
+              {can("org.admin") && <NavLink to="/settings#software-update" className="ml-2 underline hover:text-white">{t("Updates")}</NavLink>}
+            </div>
           </div>
         </nav>
         <main className="min-w-0 flex-1 px-4 py-5 md:px-8 md:py-7">
@@ -115,6 +122,7 @@ function Shell() {
             <Route path="/tenders/new" element={<NewTender />} />
             <Route path="/tenders/:id/*" element={<TenderPage />} />
             <Route path="/vault" element={<Vault />} />
+            <Route path="/firms/:id" element={<FirmPage />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>

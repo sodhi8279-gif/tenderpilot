@@ -15,7 +15,10 @@ function daysLeft(d: string | null) {
 
 export default function Portfolio() {
   const { can } = useMe();
-  const { data, error, loading, reload } = useLoad<T[]>(() => api("/tenders"));
+  const [firm, setFirm] = useState(() => { try { return sessionStorage.getItem("tp_firm_filter") || ""; } catch { return ""; } });
+  const { data, error, loading, reload } = useLoad<T[]>(() => api(firm ? `/tenders?firm=${firm}` : "/tenders"), [firm]);
+  const firms = useLoad<{ id: number; legal_name: string }[]>(() => api("/entities"));
+  const pickFirm = (v: string) => { setFirm(v); try { sessionStorage.setItem("tp_firm_filter", v); } catch { /* storage blocked */ } };
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("active");
   const rows = (data || []).filter((t) => (status === "all" || t.status === status) &&
@@ -35,6 +38,12 @@ export default function Portfolio() {
         <select aria-label="Filter by status" className={`${inputCls} w-44`} value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="active">{tr("In preparation")}</option><option value="submitted">{tr("Submitted")}</option><option value="all">{tr("All tenders")}</option>
         </select>
+        {(firms.data?.length ?? 0) > 0 && (
+          <select aria-label={tr("Filter by client firm")} className={`${inputCls} w-64`} value={firm} onChange={(e) => pickFirm(e.target.value)}>
+            <option value="">{tr("All client firms")}</option>
+            {firms.data!.map((f) => <option key={f.id} value={f.id}>{f.legal_name}</option>)}
+          </select>
+        )}
       </div>
       <ErrorBox error={error} onRetry={reload} />
       {loading && !data ? <Loading /> : sorted.length === 0 ? (
@@ -42,7 +51,7 @@ export default function Portfolio() {
       ) : (
         <div className="overflow-x-auto rounded-lg border border-line bg-panel">
           <table className="datagrid">
-            <thead><tr><th>{tr("Tender")}</th><th>{tr("Bidder")}</th><th>{tr("Deadline")}</th><th>{tr("Open blockers")}</th><th>{tr("Checklist closed")}</th></tr></thead>
+            <thead><tr><th>{tr("Tender")}</th><th>{tr("Client firm / JV")}</th><th>{tr("Deadline")}</th><th>{tr("Open blockers")}</th><th>{tr("Checklist closed")}</th></tr></thead>
             <tbody>
               {sorted.map((t) => {
                 const dl = daysLeft(t.deadline_at);
