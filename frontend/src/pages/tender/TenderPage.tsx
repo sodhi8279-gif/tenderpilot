@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { t as tr } from "../../i18n";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api";
 import { useMe } from "../../App";
@@ -92,7 +93,7 @@ function TenderRoute({ t, reload }: { t: Tender; reload: () => void }) {
                 <span className={cx("text-xs tabular-nums", st === "done" ? "text-pass" : "text-muted")}>Step {i + 1}</span>
                 <Status s={st} />
               </div>
-              <button className="text-left text-sm font-medium hover:underline" onClick={() => nav(`/tenders/${t.id}${where === "overview" ? "" : `/${where}`}`)}>{label}</button>
+              <button className="text-left text-sm font-medium hover:underline" onClick={() => nav(`/tenders/${t.id}${where === "overview" ? "" : `/${where}`}`)}>{tr(label)}</button>
               {can("tasks.write") && (
                 <div className="mt-auto flex gap-3 pt-1 text-xs">
                   {st !== "done" ? <button className="text-teal underline" onClick={() => set(k, "done")}>Mark done</button>

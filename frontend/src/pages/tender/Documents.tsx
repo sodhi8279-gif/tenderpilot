@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
+import { t } from "../../i18n";
 import { api } from "../../api";
 import { useMe } from "../../App";
 import { Button, Empty, ErrorBox, inputCls, Loading, Notice, Panel, Status, useAction, useLoad } from "../../ui";
@@ -53,9 +54,9 @@ export default function Documents({ tid, onChange }: { tid: number; onChange: ()
         <Panel title="Upload tender volumes">
           <ErrorBox error={act.error} />
           <div className="flex flex-wrap items-end gap-3 text-sm">
-            <label>Document type
+            <label>{t("Document type")}
               <select className={`${inputCls} mt-1 w-56`} value={cls} onChange={(e) => setCls(e.target.value)}>
-                <option value="unclassified">Detect automatically</option>
+                <option value="unclassified">{t("Detect automatically")}</option>
                 {CLASSES.map((c) => <option key={c} value={c}>{lbl(c)}</option>)}
               </select>
             </label>
@@ -73,7 +74,7 @@ export default function Documents({ tid, onChange }: { tid: number; onChange: ()
           <p className="mt-1 text-xs text-muted">{reread.data.note}</p>
           {can("documents.write") && (
             <Button className="mt-3" kind="secondary" disabled={act.busy}
-              onClick={() => act.run(() => api(`/tenders/${tid}/reread`, { method: "POST" }), refresh)}>Re-read with the latest reader</Button>
+              onClick={() => act.run(() => api(`/tenders/${tid}/reread`, { method: "POST" }), refresh)}>{t("Re-read with the latest reader")}</Button>
           )}
         </Panel>
       )}
@@ -87,7 +88,7 @@ export default function Documents({ tid, onChange }: { tid: number; onChange: ()
           {comp.data.possibly_missing_volumes.length > 0 && <p className="mt-2 text-sm text-gap">Not seen yet: {comp.data.possibly_missing_volumes.map(lbl).join(", ")}. {comp.data.note}</p>}
         </Panel>
       )}
-      <Panel title="Document register" actions={<Button kind="secondary" onClick={refresh}>Refresh</Button>}>
+      <Panel title="Document register" actions={<Button kind="secondary" onClick={refresh}>{t("Refresh")}</Button>}>
         <ErrorBox error={docs.error} onRetry={docs.reload} />
         {docs.loading && !docs.data ? <Loading /> : !docs.data?.length ? <Empty>No documents uploaded yet.</Empty> : (
           <div className="overflow-x-auto"><table className="datagrid">
