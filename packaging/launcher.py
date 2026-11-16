@@ -3,10 +3,13 @@
   TenderPilot.exe            start TenderPilot and open it in the browser
   TenderPilot.exe --demo     start the demo version (separate SYNTHETIC data, created on first run)
   TenderPilot.exe --backup   write a consistent backup zip of this computer's TenderPilot data
+  TenderPilot.exe --local    start for this computer only, even if network access is turned on
 
 Program files and user data are kept apart: data lives in %LOCALAPPDATA%\\TenderPilot (or
 TenderPilot-Demo), so reinstalling or uninstalling the program never deletes tenders or documents.
-Only 127.0.0.1 is used, so nothing is reachable from other computers.
+By default only 127.0.0.1 is used, so nothing is reachable from other computers. When an administrator turns on
+network access (Settings > Network access; stored in data\\server.json), TenderPilot listens on the server's network
+addresses over HTTPS so staff can use it from their own browsers. The demo is never opened to the network.
 """
 from __future__ import annotations
 
@@ -66,42 +69,58 @@ def configure_environment(demo: bool) -> Path:
 
 
 def probe(port: int) -> dict | None:
-    try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=1.5) as r:
-            return json.loads(r.read().decode())
-    except Exception:
-        return None
+    """Is a TenderPilot answering on this port (over http or https)?"""
+    import ssl
+    ctx = ssl.create_default_context()
+    ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE  # our own self-signed certificate
+    for scheme in ("http", "https"):
+        try:
+            with urllib.request.urlopen(f"{scheme}://127.0.0.1:{port}/api/health", timeout=1.5,
+                                        context=ctx if scheme == "https" else None) as r:
+                return json.loads(r.read().decode())
+        except Exception:
+            continue
+    return None
 
 
-def port_free(port: int) -> bool:
+def port_free(port: int, host: str = "127.0.0.1") -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
-            s.bind(("127.0.0.1", port))
+            s.bind((host, port))
             return True
         except OSError:
             return False
 
 
-def pick_port(demo: bool) -> tuple[int, bool]:
+def pick_port(demo: bool, wanted: int, network: bool) -> tuple[int, bool]:
     """Return (port, already_running). Reuses a TenderPilot of the same kind if one is running."""
-    port = PORTS[demo]
+    port = wanted
     info = probe(port)
     if info and info.get("app") == "TenderPilot" and bool(info.get("demo")) == demo:
         return port, True
-    if port_free(port):
+    if port_free(port, "0.0.0.0" if network else "127.0.0.1"):
         return port, False
+    if network:  # staff use a fixed address: never move silently
+        raise RuntimeError(f"Port {port} is used by another program. Choose another port in Settings > Network access "
+                           f"(start once with --local to reach Settings), or stop the other program.")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:  # someone else has our port: take any free one
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1], False
 
 
-def open_when_ready(port: int, browser: bool) -> None:
-    url = f"http://127.0.0.1:{port}"
+def open_when_ready(port: int, browser: bool, https: bool = False, staff_urls: list[str] | None = None) -> None:
+    url = f"{'https' if https else 'http'}://127.0.0.1:{port}"
     for _ in range(240):
         if probe(port):
             if browser:
                 webbrowser.open(url)
             print(f"\nTenderPilot is running at {url}")
+            if staff_urls:
+                print("Network access is ON. Staff open one of these addresses in their browser:")
+                for u in staff_urls:
+                    print(f"   {u}")
+                if https:
+                    print("The first time, the browser warns about the certificate: see Settings > Network access.")
             print("Keep this window open while you work. Close it to stop TenderPilot.\n")
             return
         time.sleep(0.5)
@@ -149,6 +168,7 @@ def main() -> int:
     ap.add_argument("--demo", action="store_true", help="run the demo version with SYNTHETIC data")
     ap.add_argument("--backup", action="store_true", help="back up this computer's TenderPilot data and exit")
     ap.add_argument("--no-browser", action="store_true", help="do not open the browser")
+    ap.add_argument("--local", action="store_true", help="this computer only, even if network access is turned on")
     args = ap.parse_args()
 
     home = configure_environment(args.demo)
@@ -163,13 +183,27 @@ def main() -> int:
         time.sleep(4)
         return code
 
-    port, running = pick_port(args.demo)
+    from app.services import netconfig  # reads data\server.json (environment is set up above)
+
+    cfg = netconfig.read_config()
+    network = cfg["network"] and not args.demo and not args.local
+    https = network and cfg["https"]
+    wanted = PORTS[True] if args.demo else cfg["port"]
+    port, running = pick_port(args.demo, wanted, network)
     if running:
         print("TenderPilot is already running; opening it in your browser.")
         if not args.no_browser:
-            webbrowser.open(f"http://127.0.0.1:{port}")
+            info = probe(port) or {}
+            webbrowser.open(f"{'https' if info.get('https') else 'http'}://127.0.0.1:{port}")
         time.sleep(2)
         return 0
+    os.environ["TP_NETWORK_ACTIVE"] = "1" if network else "0"
+    os.environ["TP_HTTPS_ACTIVE"] = "1" if https else "0"
+    os.environ["TP_PORT"] = str(port)
+    ssl_args: dict = {}
+    if https:
+        netconfig.ensure_cert()
+        ssl_args = {"ssl_certfile": str(netconfig.CERT), "ssl_keyfile": str(netconfig.KEY)}
 
     import uvicorn
 
@@ -178,9 +212,11 @@ def main() -> int:
     if args.demo:
         seed_demo_if_needed()
         print(f"Demo sign-in: org.admin@demo.tenderpilot.local / {DEMO_PASSWORD}")
-    threading.Thread(target=open_when_ready, args=(port, not args.no_browser), daemon=True).start()
-    print("Starting...")
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning", loop="asyncio", http="h11", lifespan="on")
+    staff = netconfig.urls(port, https) if network else None
+    threading.Thread(target=open_when_ready, args=(port, not args.no_browser, https, staff), daemon=True).start()
+    print("Starting..." + (" (network access ON)" if network else ""))
+    uvicorn.run(app, host="0.0.0.0" if network else "127.0.0.1", port=port, log_level="warning", loop="asyncio",
+                http="h11", lifespan="on", **ssl_args)
     return 0
 
 

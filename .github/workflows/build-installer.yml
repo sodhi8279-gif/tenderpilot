@@ -102,6 +102,27 @@ jobs:
           Write-Host "Data kept across the update: OK"
           Get-Process TenderPilot -ErrorAction SilentlyContinue | Stop-Process -Force
 
+      - name: Network access test (staff computers reach the server over HTTPS)
+        shell: pwsh
+        run: |
+          $cfg = "$env:LOCALAPPDATA\TenderPilot\data\server.json"
+          Set-Content -Path $cfg -Value '{"network": true, "port": 8471, "https": true}' -Encoding ascii
+          $exe = "$env:LOCALAPPDATA\Programs\TenderPilot\TenderPilot.exe"
+          $p = Start-Process $exe -ArgumentList "--no-browser" -PassThru
+          $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } | Select-Object -First 1).IPAddress
+          $ok = $null
+          foreach ($i in 1..60) { try { $ok = Invoke-RestMethod "https://${ip}:8471/api/health" -SkipCertificateCheck -TimeoutSec 3; break } catch { Start-Sleep 2 } }
+          if (-not $ok -or -not $ok.https) { throw "TenderPilot was not reachable over HTTPS on $ip" }
+          Write-Host "Reached over the network at https://${ip}:8471 (version $($ok.version))"
+          try { Invoke-RestMethod "http://${ip}:8471/api/health" -TimeoutSec 3 | Out-Null; throw "Plain HTTP must not be served" } catch { if ($_.Exception.Message -eq "Plain HTTP must not be served") { throw } }
+          $tok = (Invoke-RestMethod -Method Post "https://${ip}:8471/api/v1/auth/login" -SkipCertificateCheck -ContentType application/json -Body (@{
+            email = "admin@test.local"; password = "update-test-12345" } | ConvertTo-Json)).token
+          if (-not $tok) { throw "Staff sign-in over the network failed" }
+          Write-Host "Staff sign-in over the network: OK"
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Get-Process TenderPilot -ErrorAction SilentlyContinue | Stop-Process -Force
+          Remove-Item $cfg
+
       - uses: actions/upload-artifact@v4
         with:
           name: TenderPilot-installers
@@ -128,5 +149,13 @@ jobs:
           $m = [regex]::Match($log, "(?ms)^## $([regex]::Escape($ver))\s*\r?\n(.*?)(?=^## |\z)")
           $notes = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "TenderPilot $ver" }
           Set-Content -Path release-notes.md -Value $notes -Encoding utf8
-          gh release create $tag (Get-ChildItem installer\*.exe, installer\*.sha256 | ForEach-Object FullName) --title "TenderPilot $ver" --notes-file release-notes.md
+          # Server package: installer + checksum + server guide in one zip (for copying to a server)
+          $dir = "TenderPilot-$ver"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Copy-Item installer\TenderPilot-Setup.exe, installer\TenderPilot-Setup.exe.sha256 $dir
+          Copy-Item packaging\INSTALL-ON-SERVER.txt "$dir\INSTALL-ON-SERVER.txt"
+          Compress-Archive -Path $dir -DestinationPath "installer\$dir-Windows-Setup.zip" -CompressionLevel Optimal
+          $zh = (Get-FileHash "installer\$dir-Windows-Setup.zip" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "installer\$dir-Windows-Setup.zip.sha256" -Value "$zh  $dir-Windows-Setup.zip" -NoNewline -Encoding ascii
+          gh release create $tag (Get-ChildItem installer\*.exe, installer\*.zip, installer\*.sha256 | ForEach-Object FullName) --title "TenderPilot $ver" --notes-file release-notes.md
           if ($LASTEXITCODE) { throw "Could not publish the release" }

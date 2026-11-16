@@ -1,4 +1,4 @@
-# Feature status (as of 2026-11-15)
+# Feature status (as of 2026-11-16)
 
 Legend: **Done**, meaning implemented and covered by automated tests and/or checked in a browser. **Partial**, meaning it works with stated limits. **Adapter pending**, meaning the interface exists but needs installation or configuration. **Not started**.
 
@@ -32,6 +32,7 @@ Legend: **Done**, meaning implemented and covered by automated tests and/or chec
 | Re-reading after a reader upgrade | Done | Only on request (Documents tab) unless AUTO_REREAD=1; unreviewed readings are refreshed, reviewed values are kept with the new reading offered for comparison |
 | Tables continued on the next page (reader-3) | Done | Personnel, machinery and quantity rows below no heading on the next page are read under the heading still open at the foot of the previous page; a row cut by the page break is joined. Tested on synthetic layouts only |
 | Client firms library (bid-submission company) | Done | Firm pages with profile and credentials grouped by kind, expiry warnings, turnover by year; single firm or JV chosen per tender from the library with credentials shown at once; tender list filtered by firm; submitting company profile in Settings; forms fill firm and company details |
+| Network access (server install) | Done | Settings > Network access: listens on the server's addresses over HTTPS with a self-signed certificate for its names and IPs; firewall command and certificate download shown; first setup only on the server; sign-in throttling; demo never networked; installer options for autostart and network. Not yet: Windows service mode (runs in the signed-in account), certificates from an organisation CA |
 | Data safety on update | Done | Database copied before every migration; additive migrations only; `backend/verify_upgrade.py` checks a real database copy row by row |
 | Technical eligibility rules: personnel (one person counted once across posts), equipment (capacity units, ownership, lease validity), physical quantities (FY window, unit conversion km→m, lakh cum), registration class | Done | Evidence categories: personnel, machinery, executed_quantity, registration (with class) |
 | JV sharing per criterion suggested from the JV clause (pre-filled for reviewer confirmation, never applied automatically); new mode "each member meets its % share" for similar work; pooled personnel/equipment/quantities with member minima | Done | Tested |
