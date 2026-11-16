@@ -1,0 +1,40 @@
+TenderPilot - installation on a Windows server or PC
+==========================================================
+
+Files in this folder
+  TenderPilot-Setup.exe          the full program (includes the "TenderPilot Demo" and "TenderPilot Backup" shortcuts)
+  TenderPilot-Setup.exe.sha256   its SHA-256 checksum (to check the file was copied without damage)
+
+Requirements
+  Windows 10 / 11 or Windows Server 2016 or later, 64-bit. About 600 MB free disk space plus room for your documents.
+  No administrator rights needed. No internet needed to run (internet is used only to check for updates).
+
+1. Copy and check the file
+   Copy this folder to the server. Optional check in PowerShell, inside the folder:
+       (Get-FileHash .\TenderPilot-Setup.exe -Algorithm SHA256).Hash
+   It must equal the long code in TenderPilot-Setup.exe.sha256 (upper/lower case does not matter).
+
+2. Install
+   Sign in to the server with the Windows account that will run TenderPilot, then double-click TenderPilot-Setup.exe.
+   If Windows shows "Windows protected your PC": More info > Run anyway (the installer is not code-signed).
+   TenderPilot is installed for that Windows account only (in its AppData folder).
+
+3. Start
+   Start menu > TenderPilot. A black window opens and the browser shows TenderPilot at http://127.0.0.1:8471
+   Keep the black window open while working; close it to stop TenderPilot.
+   First start: create your organisation (your bid-submission company) and the administrator account.
+
+4. Where the data is
+   %LOCALAPPDATA%\TenderPilot        tenders, client firms, documents (never deleted by updates or uninstall)
+   Back up with Start menu > TenderPilot Backup, and copy the backup zip to another drive regularly.
+
+5. Updates
+   Bottom of the left menu > Updates (administrators). TenderPilot backs up all data, installs the new version and
+   restarts by itself.
+
+IMPORTANT for servers
+   TenderPilot listens on the server itself only (127.0.0.1). It can be used by people signed in to the server
+   (for example through Remote Desktop), but other computers in the office cannot open it in their own browsers.
+   Access from other computers needs a network mode with sign-in over HTTPS; ask for it before relying on that.
+
+Already installed? Running this setup installs over the old version and keeps all data.

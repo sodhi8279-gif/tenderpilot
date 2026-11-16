@@ -1,0 +1,33 @@
+# Adds TenderPilot-<version>-Windows-Setup.zip (the published installer, its checksum and server install notes) to
+# an existing release. Runs when a branch named release-zip/v<version> is pushed. The installer inside is the exact
+# file already published with the release (downloaded and checked, not rebuilt).
+name: Attach setup zip to release
+
+on:
+  push:
+    branches: ["release-zip/**"]
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download, check, zip and attach
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#release-zip/}"
+          ver="${tag#v}"
+          dir="TenderPilot-$ver"
+          mkdir -p "$dir"
+          gh release download "$tag" -p "TenderPilot-Setup.exe" -p "TenderPilot-Setup.exe.sha256" -D "$dir"
+          (cd "$dir" && echo "$(cut -d' ' -f1 TenderPilot-Setup.exe.sha256)  TenderPilot-Setup.exe" | sha256sum -c -)
+          cp packaging/INSTALL-ON-SERVER.txt "$dir/INSTALL-ON-SERVER.txt"
+          zip -r -9 "$dir-Windows-Setup.zip" "$dir"
+          unzip -t "$dir-Windows-Setup.zip"
+          sha256sum "$dir-Windows-Setup.zip" | sed "s#  .*#  $dir-Windows-Setup.zip#" > "$dir-Windows-Setup.zip.sha256"
+          gh release upload "$tag" "$dir-Windows-Setup.zip" "$dir-Windows-Setup.zip.sha256" --clobber
