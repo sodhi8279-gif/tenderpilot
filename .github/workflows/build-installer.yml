@@ -149,5 +149,13 @@ jobs:
           $m = [regex]::Match($log, "(?ms)^## $([regex]::Escape($ver))\s*\r?\n(.*?)(?=^## |\z)")
           $notes = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "TenderPilot $ver" }
           Set-Content -Path release-notes.md -Value $notes -Encoding utf8
-          gh release create $tag (Get-ChildItem installer\*.exe, installer\*.sha256 | ForEach-Object FullName) --title "TenderPilot $ver" --notes-file release-notes.md
+          # Server package: installer + checksum + server guide in one zip (for copying to a server)
+          $dir = "TenderPilot-$ver"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Copy-Item installer\TenderPilot-Setup.exe, installer\TenderPilot-Setup.exe.sha256 $dir
+          Copy-Item packaging\INSTALL-ON-SERVER.txt "$dir\INSTALL-ON-SERVER.txt"
+          Compress-Archive -Path $dir -DestinationPath "installer\$dir-Windows-Setup.zip" -CompressionLevel Optimal
+          $zh = (Get-FileHash "installer\$dir-Windows-Setup.zip" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "installer\$dir-Windows-Setup.zip.sha256" -Value "$zh  $dir-Windows-Setup.zip" -NoNewline -Encoding ascii
+          gh release create $tag (Get-ChildItem installer\*.exe, installer\*.zip, installer\*.sha256 | ForEach-Object FullName) --title "TenderPilot $ver" --notes-file release-notes.md
           if ($LASTEXITCODE) { throw "Could not publish the release" }
