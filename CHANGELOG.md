@@ -3,6 +3,17 @@
 Each section is shown in the app (Settings & audit > Software update) when that version is offered as an update.
 Raise APP_VERSION in backend/app/version.py and add a section here for every release.
 
+## 1.4.0
+- **Use TenderPilot from every computer in the office**: install it once on a server and turn on
+  Settings & audit > Network access. Staff open the address shown there in their own browser. Connections are
+  encrypted (HTTPS) with a certificate TenderPilot makes for the server; the panel shows the Windows Firewall step and
+  lets staff computers download the certificate to remove the browser warning.
+- Installer options for servers: start TenderPilot when Windows signs in, and allow other computers.
+- Staff accounts: administrators can switch an account off or on and reset a forgotten password; everyone can change
+  their own password (Settings > Your account).
+- Security: repeated wrong passwords block sign-in for 15 minutes; the first organisation can only be created on the
+  server itself; the demo is never opened to the network.
+
 ## 1.3.0
 - Built for a company that submits tenders for other firms: "Company vault" is now **Client firms**.
 - Each client firm has its own page: full profile (CIN, Udyam, EPF/ESI, contacts, bank for EMD refunds) and its documents

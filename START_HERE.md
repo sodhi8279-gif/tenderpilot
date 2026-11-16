@@ -54,6 +54,13 @@ After installing, open the Start menu and click **TenderPilot** (or **TenderPilo
 - Treat an unknown as a pass, or check certificates against today's date instead of the tender's cutoff date.
 - Send your documents to an outside AI service unless an administrator turns it on in Settings.
 
+## 3b. One server for the whole office
+
+Install TenderPilot once on a server and tick "Let other computers in the office use TenderPilot" in the installer
+(or turn it on later under **Settings & audit → Network access**). Staff then open the address shown there, such as
+`https://SERVERNAME:8471`, in their own browser; nothing is installed on their computers. Full steps:
+`packaging/INSTALL-ON-SERVER.txt` (also inside the setup zip).
+
 ## 4. Updates
 
 When a new version is published, administrators see **Update available** in the menu. Open **Settings & audit → Software update**, read

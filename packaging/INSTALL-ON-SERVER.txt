@@ -1,0 +1,63 @@
+TenderPilot - install on a server so the whole office can use it
+================================================================
+
+TenderPilot is installed once, on the server. Staff use it from their own computers in a web browser
+(Chrome or Edge): nothing is installed on their computers.
+
+Files in this folder
+  TenderPilot-Setup.exe          the full program
+  TenderPilot-Setup.exe.sha256   checksum (to check the file was copied without damage)
+
+Server requirements
+  Windows 10 / 11 or Windows Server 2016 or later, 64-bit; about 600 MB free disk space plus room for documents.
+  A fixed IP address on the office network is strongly recommended (ask your network administrator).
+  No internet needed to run (internet is used only to check for updates).
+
+1. Check the file (optional), in PowerShell inside this folder:
+       (Get-FileHash .\TenderPilot-Setup.exe -Algorithm SHA256).Hash
+   It must equal the code in TenderPilot-Setup.exe.sha256.
+
+2. Install on the server
+   Sign in to the server with the Windows account that will run TenderPilot. Double-click TenderPilot-Setup.exe
+   (if Windows warns: More info > Run anyway). On the options page tick BOTH:
+     [x] Start TenderPilot when I sign in to Windows
+     [x] Let other computers in the office use TenderPilot
+   Finish the installer and let it start TenderPilot.
+
+3. First start (on the server itself)
+   The browser on the server opens TenderPilot. Create your organisation (your company) and the administrator
+   account. This can only be done on the server, never from another computer.
+   The browser may warn about the certificate the first time: choose Advanced > Continue.
+
+4. Open the Windows Firewall (once, by a server administrator)
+   In TenderPilot: Settings & audit > Network access shows the exact command. Open PowerShell with
+   "Run as administrator" and paste it. It looks like:
+       New-NetFirewallRule -DisplayName "TenderPilot 8471" -Direction Inbound -Protocol TCP -LocalPort 8471 -Action Allow -Profile Domain,Private
+
+5. Add your staff
+   Settings & audit > People and roles: add each person with their own e-mail, a starting password and their
+   role(s). Never share one account. People can change their password under Your account.
+
+6. Staff open TenderPilot
+   Give staff the address shown under Settings & audit > Network access, for example:
+       https://SERVERNAME:8471      or      https://192.168.1.10:8471
+   The first time, the browser warns "Your connection is not private" because TenderPilot made its own
+   certificate. Either choose Advanced > Continue, or (better) install the certificate once on each computer:
+   Network access > Download certificate, double-click it, Install Certificate > Local Machine >
+   "Place all certificates in the following store" > Trusted Root Certification Authorities.
+
+Keep it running
+   TenderPilot runs while its black window is open on the server. On Remote Desktop, DISCONNECT instead of
+   signing out. With option "Start TenderPilot when I sign in", it starts again after the server restarts and
+   that account signs in.
+
+Data, backups and updates
+   Data: %LOCALAPPDATA%\TenderPilot on the server (never deleted by updates or uninstall).
+   Backups: Start menu > Back up TenderPilot data; copy the zip to another drive regularly.
+   Updates: an administrator clicks Updates at the bottom of the left menu. TenderPilot backs up all data,
+   installs the new version and restarts by itself; staff reload the page after about a minute.
+
+Something wrong?
+   Start menu > "TenderPilot (this computer only)" starts it for the server alone (no network), for example to
+   change the port in Settings > Network access.
+   Already installed? Running this setup installs over the old version and keeps all data.

@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import auth, documents, eligibility, estimating, packaging, system, tenders, update, vault
+from .api import auth, documents, eligibility, estimating, network, packaging, system, tenders, update, vault
 from .config import FRONTEND_DIST, settings
 from .migrations import migrate
 from .version import APP_VERSION
@@ -88,13 +88,14 @@ async def unhandled(_request: Request, exc: Exception):
     return JSONResponse({"detail": "Internal error. The action was not completed; please retry."}, status_code=500)
 
 
-for r in (system.router, auth.router, vault.router, tenders.router, eligibility.router, documents.router, estimating.router, packaging.router, update.router):
+for r in (system.router, auth.router, vault.router, tenders.router, eligibility.router, documents.router, estimating.router, packaging.router, update.router, network.router):
     app.include_router(r)
 
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "app": "TenderPilot", "demo": os.environ.get("DEMO_MODE") == "1", "version": APP_VERSION}
+    return {"ok": True, "app": "TenderPilot", "demo": os.environ.get("DEMO_MODE") == "1", "version": APP_VERSION,
+            "https": os.environ.get("TP_HTTPS_ACTIVE") == "1"}
 
 
 DIST = FRONTEND_DIST

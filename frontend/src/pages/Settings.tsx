@@ -3,6 +3,8 @@ import { api } from "../api";
 import { useMe } from "../App";
 import SoftwareUpdate from "./SoftwareUpdate";
 import YourCompany from "./YourCompany";
+import NetworkAccess from "./NetworkAccess";
+import YourAccount from "./YourAccount";
 import { Button, cx, Empty, ErrorBox, Field, fmtDate, inputCls, Loading, Notice, Panel, useAction, useLoad } from "../ui";
 
 const ROLES = ["org_admin", "tender_manager", "technical_reviewer", "estimator", "document_coordinator", "finance_reviewer", "authorized_approver", "auditor"];
@@ -183,8 +185,10 @@ function AiProvider({ admin, onChange }: { admin: boolean; onChange: () => void 
 }
 
 export default function Settings() {
-  const { can, refresh } = useMe();
-  const users = useLoad<{ id: number; name: string; email: string; roles: string[] }[]>(() => api("/users"));
+  const { can, refresh, me } = useMe();
+  const users = useLoad<{ id: number; name: string; email: string; roles: string[]; active: boolean }[]>(() => api("/users"));
+  const [resetFor, setResetFor] = useState<number | null>(null);
+  const [newPw, setNewPw] = useState("");
   const audit = useLoad<{ id: number; created_at: string; user_name: string; action: string; subject_type: string; subject_id: number | null; tender_id: number | null; details: Record<string, unknown> }[]>(
     () => can("audit.read") ? api("/audit?limit=200") : Promise.resolve([]));
   const notes = useLoad<{ id: number; message: string; created_at: string; read: boolean }[]>(() => api("/notifications"));
@@ -196,6 +200,8 @@ export default function Settings() {
       <h1 className="text-2xl font-semibold tracking-tight">Settings and audit</h1>
       <ErrorBox error={act.error} />
       {admin && <SoftwareUpdate />}
+      {admin && <NetworkAccess />}
+      <YourAccount />
       <YourCompany />
       <SystemChecks admin={admin} />
       <AiProvider admin={admin} onChange={() => { refresh(); audit.reload(); }} />
@@ -214,8 +220,23 @@ export default function Settings() {
             <div><Button disabled={!u.roles.length || act.busy}>Add person</Button></div>
           </form>
         )}
-        <table className="datagrid"><thead><tr><th>Name</th><th>Email</th><th>Roles</th></tr></thead>
-          <tbody>{users.data?.map((x) => <tr key={x.id}><td>{x.name}</td><td>{x.email}</td><td>{x.roles.map((r) => r.replace(/_/g, " ")).join(", ")}</td></tr>)}</tbody></table>
+        <table className="datagrid"><thead><tr><th>Name</th><th>Email</th><th>Roles</th><th>Account</th>{admin && <th></th>}</tr></thead>
+          <tbody>{users.data?.map((x) => (
+            <tr key={x.id} className={x.active ? "" : "text-muted"}>
+              <td>{x.name}</td><td>{x.email}</td><td>{x.roles.map((r) => r.replace(/_/g, " ")).join(", ")}</td>
+              <td>{x.active ? "Active" : "Switched off"}</td>
+              {admin && <td className="whitespace-nowrap">
+                {resetFor === x.id ? (
+                  <form className="flex items-center gap-1" onSubmit={(e) => { e.preventDefault(); act.run(() => api(`/users/${x.id}`, { method: "PATCH", json: { password: newPw } }), () => { setResetFor(null); setNewPw(""); }); }}>
+                    <input aria-label={`New password for ${x.name}`} required minLength={10} type="password" autoComplete="new-password" placeholder="New password (10+)" className={`${inputCls} w-40`} value={newPw} onChange={(e) => setNewPw(e.target.value)} />
+                    <Button disabled={act.busy}>Set</Button><Button kind="ghost" onClick={() => { setResetFor(null); setNewPw(""); }}>Cancel</Button>
+                  </form>
+                ) : <>
+                  <Button kind="ghost" onClick={() => { setResetFor(x.id); setNewPw(""); }}>Reset password</Button>
+                  {x.id !== me.user.id && <Button kind="ghost" onClick={() => act.run(() => api(`/users/${x.id}`, { method: "PATCH", json: { active: !x.active } }), users.reload)}>{x.active ? "Switch off" : "Switch on"}</Button>}
+                </>}
+              </td>}
+            </tr>))}</tbody></table>
         <Notice>Prices are visible only to estimators, finance reviewers, approvers, tender managers, admins and auditors. Permissions are enforced on the server.</Notice>
       </Panel>
       {can("audit.read") && (

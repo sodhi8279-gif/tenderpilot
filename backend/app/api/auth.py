@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -13,7 +15,7 @@ from ..db import get_db
 from ..deps import Ctx, get_ctx
 from ..models import ROLES, AuditEvent, Membership, Notification, Organization, User
 from ..security import PERMISSIONS, create_token, hash_password, verify_password
-from ..services import ai, convert
+from ..services import ai, convert, netconfig
 from ..services.ingest import get_ocr
 from .common import to_dict
 
@@ -54,8 +56,36 @@ def setup_status(db: Session = Depends(get_db)):
     return out
 
 
+def _is_local(request: Request) -> bool:
+    host = request.client.host if request.client else ""
+    return host in ("127.0.0.1", "::1", "localhost", "testclient")  # "testclient": the automated tests' local client
+
+
+# ---- sign-in protection: too many wrong passwords block that e-mail (and that computer) for a while
+FAIL_LIMIT, FAIL_WINDOW_S = 8, 15 * 60
+_fails: dict[str, list[float]] = {}
+_fails_lock = threading.Lock()
+
+
+def _recent_failures(key: str, now: float) -> int:
+    with _fails_lock:
+        times = [t for t in _fails.get(key, []) if now - t < FAIL_WINDOW_S]
+        _fails[key] = times
+        return len(times)
+
+
+def _record_failure(*keys: str) -> None:
+    now = time.time()
+    with _fails_lock:
+        for k in keys:
+            _fails.setdefault(k, []).append(now)
+
+
 @router.post("/setup")
-def setup(body: SetupIn, db: Session = Depends(get_db)):
+def setup(body: SetupIn, request: Request, db: Session = Depends(get_db)):
+    if netconfig.active()["network"] and not _is_local(request):
+        raise HTTPException(403, "Create the organisation and the first administrator on the server itself "
+                                 "(open TenderPilot on the server), then sign in here.")
     if db.scalar(select(func.count()).select_from(User)) > 0:
         raise HTTPException(409, "Already set up; ask an organization admin for an account")
     org = Organization(name=body.org_name)
@@ -69,10 +99,18 @@ def setup(body: SetupIn, db: Session = Depends(get_db)):
 
 
 @router.post("/auth/login")
-def login(body: LoginIn, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.email == body.email.lower().strip()))
+def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
+    email = body.email.lower().strip()
+    ip = request.client.host if request.client else "?"
+    now = time.time()
+    if _recent_failures(f"email:{email}", now) >= FAIL_LIMIT or _recent_failures(f"ip:{ip}", now) >= FAIL_LIMIT * 3:
+        raise HTTPException(429, "Too many wrong passwords. Wait 15 minutes, or ask an administrator to reset the password.")
+    user = db.scalar(select(User).where(User.email == email))
     if not user or not user.active or not verify_password(body.password, user.password_hash):
+        _record_failure(f"email:{email}", f"ip:{ip}")
         raise HTTPException(401, "Incorrect email or password")
+    with _fails_lock:
+        _fails.pop(f"email:{email}", None)
     orgs = sorted(set(db.scalars(select(Membership.org_id).where(Membership.user_id == user.id))))
     if not orgs:
         raise HTTPException(403, "No organization membership")
@@ -141,6 +179,50 @@ def create_user(body: UserIn, ctx: Ctx = Depends(get_ctx)):
     audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="user.added", subject_type="user", subject_id=user.id, roles=body.roles)
     ctx.db.commit()
     return {"id": user.id}
+
+
+class UserPatch(BaseModel):
+    active: bool | None = None
+    password: str | None = Field(default=None, min_length=10)
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+@router.patch("/users/{user_id}")
+def update_user(user_id: int, body: UserPatch, ctx: Ctx = Depends(get_ctx)):
+    """Administrator: switch an account off or on, rename it, or set a new password (e.g. a forgotten one)."""
+    ctx.require("org.admin")
+    if not ctx.db.scalar(select(Membership).where(Membership.org_id == ctx.org_id, Membership.user_id == user_id)):
+        raise HTTPException(404, "User not found")
+    u = ctx.db.get(User, user_id)
+    if body.active is False and u.id == ctx.user.id:
+        raise HTTPException(409, "You cannot switch off your own account")
+    changed = []
+    if body.active is not None and body.active != u.active:
+        u.active, _ = body.active, changed.append("active")
+    if body.name:
+        u.name, _ = body.name, changed.append("name")
+    if body.password:
+        u.password_hash, _ = hash_password(body.password), changed.append("password")
+        with _fails_lock:
+            _fails.pop(f"email:{u.email}", None)
+    audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="user.updated", subject_type="user", subject_id=u.id, changed=changed)
+    ctx.db.commit()
+    return {"id": u.id, "active": u.active, "name": u.name}
+
+
+class PasswordChangeIn(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=10)
+
+
+@router.post("/me/password")
+def change_my_password(body: PasswordChangeIn, ctx: Ctx = Depends(get_ctx)):
+    if not verify_password(body.current_password, ctx.user.password_hash):
+        raise HTTPException(403, "The current password is not correct")
+    ctx.user.password_hash = hash_password(body.new_password)
+    audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="user.password_changed", subject_type="user", subject_id=ctx.user.id)
+    ctx.db.commit()
+    return {"ok": True}
 
 
 @router.patch("/org")

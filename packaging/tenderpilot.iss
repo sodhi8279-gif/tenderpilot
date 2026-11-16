@@ -4,7 +4,7 @@
 ; Installs per user (no administrator rights needed). User data lives in %LOCALAPPDATA%\TenderPilot[-Demo]
 ; and is never removed by uninstall.
 
-#define AppVersion "1.3.0"
+#define AppVersion "1.4.0"
 #ifdef DEMO
   #define AppName "TenderPilot Demo"
   #define AppIdGuid "{{6C1B7E0A-3F7D-4C38-9B67-2D0E5A9F4D21}"
@@ -41,6 +41,14 @@ CloseApplications=yes
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
+#ifndef DEMO
+Name: "autostart"; Description: "Start TenderPilot when I sign in to Windows (recommended on a server)"; GroupDescription: "Server use:"; Flags: unchecked
+Name: "network"; Description: "Let other computers in the office use TenderPilot (can be changed later in Settings)"; GroupDescription: "Server use:"; Flags: unchecked
+
+[Registry]
+; Starts TenderPilot in the background (no browser) when this Windows account signs in. Current user only: no admin rights.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "TenderPilot"; ValueData: """{app}\TenderPilot.exe"" --no-browser"; Flags: uninsdeletevalue; Tasks: autostart
+#endif
 
 [Files]
 Source: "dist\TenderPilot\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -54,6 +62,7 @@ Name: "{group}\Uninstall TenderPilot Demo"; Filename: "{uninstallexe}"
 Name: "{userdesktop}\TenderPilot Demo"; Filename: "{app}\TenderPilot.exe"; Parameters: "--demo"; Tasks: desktopicon
 #else
 Name: "{group}\TenderPilot"; Filename: "{app}\TenderPilot.exe"; Comment: "Tender and bid preparation"
+Name: "{group}\TenderPilot (this computer only)"; Filename: "{app}\TenderPilot.exe"; Parameters: "--local"; Comment: "Start without network access, e.g. to change its settings"
 Name: "{group}\TenderPilot Demo"; Filename: "{app}\TenderPilot.exe"; Parameters: "--demo"; Comment: "Practice copy with SYNTHETIC data"
 Name: "{group}\Back up TenderPilot data"; Filename: "{app}\TenderPilot.exe"; Parameters: "--backup"
 Name: "{group}\Open data folder"; Filename: "{localappdata}\TenderPilot"
@@ -75,4 +84,24 @@ Filename: "{app}\TenderPilot.exe"; Parameters: "--demo --no-browser"; Flags: now
 #else
 Filename: "{app}\TenderPilot.exe"; Description: "Start TenderPilot now"; Flags: postinstall nowait skipifsilent
 Filename: "{app}\TenderPilot.exe"; Parameters: "--no-browser {param:relaunchargs|}"; Flags: nowait; Check: WizardSilent
+#endif
+
+#ifndef DEMO
+[Code]
+// "Let other computers use TenderPilot": write the network setting once. An existing setting (chosen later in
+// Settings > Network access) is never overwritten, so silent updates keep whatever the administrator chose.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Cfg: string;
+begin
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('network') then
+  begin
+    Cfg := ExpandConstant('{localappdata}\TenderPilot\data\server.json');
+    if not FileExists(Cfg) then
+    begin
+      ForceDirectories(ExtractFileDir(Cfg));
+      SaveStringToFile(Cfg, '{"network": true, "port": 8471, "https": true}', False);
+    end;
+  end;
+end;
 #endif
