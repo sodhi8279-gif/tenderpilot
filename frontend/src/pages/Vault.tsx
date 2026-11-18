@@ -4,6 +4,7 @@ import { useMe } from "../App";
 import ScanEditor from "./ScanEditor";
 import { t } from "../i18n";
 import FirmLibrary from "./Firms";
+import { readDocument } from "./ReadDocuments";
 import { Button, Empty, ErrorBox, Field, fmtDay, inputCls, Loading, Notice, Panel, Status, Tabs, useAction, useLoad } from "../ui";
 
 export type Entity = { id: number; legal_name: string; entity_type: string; registered_address: string; pan: string | null; gstin: string | null;
@@ -22,6 +23,8 @@ export const FIELDS: Record<string, string[]> = {
   machinery: ["equipment_type", "quantity", "capacity", "capacity_unit", "ownership", "make_model", "registration_no"],
   executed_quantity: ["work_name", "item", "quantity", "unit", "fy", "dia_mm", "material"],
   registration: ["authority", "class", "registration_no"],
+  work_order: ["work_name", "employer", "value", "agreement_no", "start_date", "completion_date"],
+  agreement: ["work_name", "employer", "value", "agreement_no", "start_date", "completion_date"],
 };
 const HINT: Record<string, string> = { qualification: "e.g. B.E. Civil, Diploma Mechanical", experience_years: "total years, digits",
   employment: "on rolls / to be engaged", equipment_type: "e.g. Hydraulic excavator, Batching plant", capacity_unit: "MT / cum/hr / kVA / TPH",
@@ -106,7 +109,22 @@ export function Upload({ ents, cats, replace, done }: { ents: Entity[]; cats: st
   const [f, setF] = useState(init);
   const [key, setKey] = useState(replace?.id);
   const [file, setFile] = useState<File | null>(null);
+  const [readNote, setReadNote] = useState<string | null>(null);
   const act = useAction();
+  const pick = (fl: File | null) => {
+    setFile(fl);
+    setReadNote(null);
+    if (!fl) return;
+    setReadNote(t("Reading the document…"));
+    readDocument(fl, Number(f.legal_entity_id)).then((r) => {
+      if (!r.readable) { setReadNote(t("No text could be read from this file: enter the values yourself.")); return; }
+      setF((cur) => ({ ...cur, category: replace ? cur.category : (cats.includes(r.category) ? r.category : cur.category), title: cur.title || r.title,
+        issuer: cur.issuer || r.issuer || "", subject_name_on_document: cur.subject_name_on_document || r.subject_name_on_document || "",
+        issue_date: cur.issue_date || r.issue_date || "", expiry_date: cur.expiry_date || r.expiry_date || "",
+        fields: { ...Object.fromEntries(Object.entries(r.fields).filter(([k]) => !cur.fields[k])), ...Object.fromEntries(Object.entries(cur.fields).filter(([, v]) => v)) } }));
+      setReadNote(`${t("Empty boxes were filled from the document")}${r.read_by ? ` (${t("read from")} ${r.read_by})` : ""}. ${t("Check each value against the document.")}`);
+    }).catch(() => setReadNote(t("The document could not be read: enter the values yourself.")));
+  };
   if (key !== replace?.id) { setKey(replace?.id); setF(init()); }
   const fieldKeys = FIELDS[f.category] || [];
   const submit = (e: React.FormEvent) => {
@@ -115,6 +133,7 @@ export function Upload({ ents, cats, replace, done }: { ents: Entity[]; cats: st
     Object.entries(f).forEach(([k, v]) => { if (k !== "fields" && v) fd.append(k, String(v)); });
     const fields = Object.fromEntries(Object.entries(f.fields).filter(([, v]) => v !== "").map(([k, v]) => [k, k === "is_similar" ? v === "yes" : v]));
     fd.append("fields", JSON.stringify(fields));
+    if (readNote && !readNote.startsWith(t("No text")) && !readNote.startsWith(t("The document could not"))) fd.append("confidence", "0.75");
     if (replace) fd.append("replaces_id", String(replace.id));
     if (file) fd.append("file", file);
     act.run(() => api("/evidence", { form: fd }), () => { setF(init()); setFile(null); done(); });
@@ -139,9 +158,10 @@ export function Upload({ ents, cats, replace, done }: { ents: Entity[]; cats: st
           </Field>
         ))}
         <div className="sm:col-span-3 flex flex-wrap items-center gap-4">
-          <label className="text-sm">File <input type="file" accept="application/pdf,image/*,.docx,.xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label>
-          <label className="text-sm sm:hidden">Use camera <input type="file" accept="image/*" capture="environment" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label>
+          <label className="text-sm">File <input type="file" accept="application/pdf,image/*,.docx,.xlsx" onChange={(e) => pick(e.target.files?.[0] || null)} /></label>
+          <label className="text-sm sm:hidden">Use camera <input type="file" accept="image/*" capture="environment" onChange={(e) => pick(e.target.files?.[0] || null)} /></label>
           <Button disabled={act.busy}>{replace ? "Save replacement" : "Add document"}</Button>
+          {readNote && <span className="text-xs text-muted" role="status">{readNote}</span>}
         </div>
       </form>
     </Panel>

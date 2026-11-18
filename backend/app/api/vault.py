@@ -12,7 +12,7 @@ from sqlalchemy import select
 from ..audit import audit
 from ..deps import Ctx, get_ctx
 from ..models import EVIDENCE_CATEGORIES, JV, EvidenceDerivative, EvidenceLink, EvidenceRecord, JVMember, LegalEntity, Organization
-from ..services import firms, scanfix
+from ..services import firmdocs, firms, scanfix
 from ..services.eligibility import norm_name
 from ..services.ingest import UnsafeFile, sniff_kind
 from ..services.money import try_D
@@ -182,6 +182,26 @@ def list_evidence(entity_id: int | None = None, category: str | None = None, inc
         d["entity_name"] = names.get(r.legal_entity_id)
         d["name_mismatch"] = bool(r.subject_name_on_document and norm_name(r.subject_name_on_document) != norm_name(names.get(r.legal_entity_id)))
         out.append(d)
+    return out
+
+
+@router.post("/evidence/read")
+async def read_evidence(file: UploadFile = File(...), legal_entity_id: int | None = Form(None), ctx: Ctx = Depends(get_ctx)):
+    """Read a document and suggest the record and firm details. Nothing is saved: the person reviews and saves."""
+    ctx.require("vault.write")
+    ent = ctx.own(ctx.db.get(LegalEntity, legal_entity_id), "Entity") if legal_entity_id else None
+    data = await read_upload(file)
+    try:
+        sniff_kind(data, file.filename or "")
+    except UnsafeFile as exc:
+        raise HTTPException(415, str(exc))
+    from starlette.concurrency import run_in_threadpool  # OCR can take a few seconds: keep the server responsive
+    try:
+        out = await run_in_threadpool(firmdocs.read_document, data, file.filename or "document")
+    except PermissionError:
+        raise HTTPException(422, "This PDF is password protected. Remove the password, then upload it again.")
+    if ent:
+        firmdocs.compare_with(out, ent)
     return out
 
 

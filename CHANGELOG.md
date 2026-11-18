@@ -3,6 +3,21 @@
 Each section is shown in the app (Settings & audit > Software update) when that version is offered as an update.
 Raise APP_VERSION in backend/app/version.py and add a section here for every release.
 
+## 1.5.0
+- **Client firms: upload documents and TenderPilot reads them for you.** On a firm's page, choose one or more
+  documents (PDF, scan, photo, Word or Excel): GST and PAN, incorporation certificate, Udyam, EPF/ESI, contractor
+  registration, work orders, completion certificates, CA turnover certificates, ISO, cancelled cheque. TenderPilot
+  recognises the kind of document and fills in its dates and values (work name, executed value, completion date,
+  turnover for each financial year ...). Check them, then save: records stay unverified until a reviewer checks them.
+- Firm details found in the documents (PAN, GSTIN, CIN, Udyam, address, bank account, IFSC ...) are listed next to
+  what is recorded now, with the line they were read from. Only ticked lines are added; a value already recorded is
+  never replaced unless you tick it.
+- **Add client firm > Fill from documents** fills the empty boxes of a new firm from its certificates, and can keep
+  the documents in the firm's records.
+- "Add a document" fills its empty boxes from the chosen file.
+- Scans and photos are read with the built-in OCR; GSTINs misread on a scan are corrected only when the GSTIN
+  check digit confirms it. Documents are read on your server: nothing is sent outside.
+
 ## 1.4.1
 - **Restart TenderPilot now** (Settings & audit > Network access) works: TenderPilot starts again in its own window.
   In 1.4.0 it stopped and showed "Windows cannot find '\\'"; start it from its icon if that happened.

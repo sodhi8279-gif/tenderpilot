@@ -187,6 +187,24 @@ def test_full_journey(server):
         page.get_by_role("tab", name=re.compile(r"^Tenders")).click()
         expect(page.get_by_role("link", name="10 MLD WTP at Demo Town (SYNTHETIC)")).to_be_visible()
 
+        # documents are read for the person: GST certificate + CA turnover certificate, checked, then saved
+        from test_firm_documents import GST, TURNOVER, pdf
+        tmp = Path(tempfile.mkdtemp(prefix="tp-docs-"))
+        docs = []
+        for name, text in (("gst-certificate.pdf", GST), ("ca-turnover.pdf", TURNOVER)):
+            fp = tmp / name
+            fp.write_bytes(pdf(text))
+            docs.append(str(fp))
+        page.locator("input[type=file][multiple]").set_input_files(docs)
+        expect(page.get_by_role("heading", name="Firm details found in the documents")).to_be_visible(timeout=30000)
+        expect(page.get_by_role("cell", name="GSTIN", exact=True)).to_be_visible()
+        expect(page.get_by_role("cell", name="2024-25", exact=True)).to_be_visible()
+        snap("09d-read-documents")
+        page.get_by_role("button", name=re.compile(r"Save all checked documents")).click()
+        expect(page.get_by_text("Saved to the firm's records as unverified.")).to_have_count(2, timeout=30000)
+        page.get_by_role("tab", name=re.compile(r"^Financials")).click()
+        expect(page.get_by_role("cell", name="2024-25", exact=True).first).to_be_visible()
+
         # vault: clean up a scan
         page.get_by_role("navigation", name="Main").get_by_role("link", name="Client firms").click()
         page.get_by_role("tab", name="All documents").click()
