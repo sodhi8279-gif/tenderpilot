@@ -22,6 +22,8 @@ import subprocess
 import sys
 import threading
 import time
+import socket
+import ssl
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -73,13 +75,42 @@ def can_install() -> tuple[bool, str]:
     return True, ""
 
 
+def ssl_context() -> ssl.SSLContext:
+    """Trust the certificate list shipped with TenderPilot (certifi) as well as Windows' own store.
+    A freshly installed Windows Server often lacks root certificates until a browser fetches them, so Windows'
+    store alone can make the update check fail although the internet works."""
+    ctx = ssl.create_default_context()
+    try:
+        import certifi
+        ctx.load_verify_locations(cafile=certifi.where())
+    except Exception:  # noqa: BLE001  fall back to Windows' store only
+        pass
+    return ctx
+
+
+def explain(exc: BaseException) -> str:
+    """A reason a person can act on, from a network error."""
+    reason = getattr(exc, "reason", exc)
+    if isinstance(reason, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(reason):
+        return ("The secure connection to the update server could not be verified (certificate problem). A company "
+                "firewall that inspects HTTPS can cause this. Download the new version from the release page instead.")
+    if isinstance(reason, socket.gaierror):
+        return "The update server's name could not be found: this computer seems to have no internet access (or no DNS)."
+    if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason):
+        return "The update server did not answer in time. A firewall or proxy may be blocking TenderPilot."
+    if isinstance(reason, ConnectionRefusedError) or isinstance(reason, ConnectionResetError):
+        return "The connection to the update server was refused or cut off. A firewall or proxy may be blocking TenderPilot."
+    return f"Could not reach the update server ({type(reason).__name__}: {str(reason)[:160]}). Check the internet connection."
+
+
 def _get(url: str, timeout: int = 20):
     host = re.sub(r"^https://([^/]+)/.*$", r"\1", url)
     if not url.startswith("https://") or host not in ALLOWED_HOSTS:
         raise UpdateError(f"Update address not allowed: {host}")
     req = urllib.request.Request(url, headers={"User-Agent": f"TenderPilot/{APP_VERSION}",
                                                "Accept": "application/vnd.github+json, application/octet-stream"})
-    return urllib.request.urlopen(req, timeout=timeout)  # noqa: S310  (https and allow-listed hosts only)
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl_context()))  # system proxy settings apply
+    return opener.open(req, timeout=timeout)
 
 
 def _fetch_release() -> dict:
@@ -93,7 +124,7 @@ def _fetch_release() -> dict:
             raise UpdateError("No version has been published on the update server yet.") from exc
         raise UpdateError(f"The update server answered with an error ({exc.code}). Try again later.") from exc
     except Exception as exc:  # noqa: BLE001
-        raise UpdateError("Could not reach the update server. Check the internet connection and try again.") from exc
+        raise UpdateError(explain(exc)) from exc
     assets = {a.get("name"): a.get("browser_download_url") for a in rel.get("assets", [])}
     name = installer_name()
     return {"version": str(rel.get("tag_name", "")).lstrip("vV"), "name": rel.get("name") or rel.get("tag_name"),
@@ -170,7 +201,7 @@ def _download_worker(rel: dict) -> None:
         part.unlink(missing_ok=True)
         with _lock:
             _state.update(phase="error", error=str(exc) if isinstance(exc, UpdateError)
-                          else "The download failed. Check the internet connection and try again.")
+                          else "The download failed: " + explain(exc))
 
 
 def download() -> dict:

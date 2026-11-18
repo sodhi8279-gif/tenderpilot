@@ -142,3 +142,39 @@ def test_staff_change_their_own_password(client):
     assert client.post("/api/v1/me/password", headers=h, json={"current_password": "nope", "new_password": "new-password-12"}).status_code == 403
     assert client.post("/api/v1/me/password", headers=h, json={"current_password": "old-password-12", "new_password": "new-password-12"}).status_code == 200
     assert client.post("/api/v1/auth/login", json={"email": "self@example.test", "password": "new-password-12"}).status_code == 200
+
+
+def test_restart_starts_the_program_itself_without_a_command_shell(monkeypatch):
+    """1.4.0 restarted through 'cmd /c start ...' and the quoting broke ("Windows cannot find '\\\\'")."""
+    import os
+    import sys
+
+    from app.api import network as net_api
+    monkeypatch.setattr(sys, "executable", r"C:\Users\Administrator\AppData\Local\Programs\TenderPilot\TenderPilot.exe")
+    cmd = net_api.restart_command()
+    assert cmd[0].endswith("TenderPilot.exe") and "cmd" not in cmd[0].lower()
+    assert cmd[1:] == ["--no-browser", "--after-restart", str(os.getpid())]
+
+
+def test_restarted_launcher_waits_for_the_old_one(tmp_path):
+    import importlib.util
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location("tp_launcher", Path(__file__).resolve().parents[2] / "packaging" / "launcher.py")
+    launcher = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(launcher)
+    old = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(2)"])
+    import threading
+    assert launcher.pid_alive(old.pid)
+    threading.Thread(target=old.wait, daemon=True).start()  # reap it (on Linux a finished child lingers until reaped)
+    t = time.time()
+    launcher.wait_until_stopped(old.pid, seconds=20)
+    assert 1.5 <= time.time() - t < 10 and not launcher.pid_alive(old.pid)
+
+
+def test_autostart_is_offered_only_in_the_installed_windows_program(org, tmp_net):
+    assert org.get("/api/v1/network")["autostart"] is None  # developer copy / not Windows
+    org.req("PUT", "/api/v1/network/autostart", json={"on": True}, role="tender_manager", expect=403)
+    org.req("PUT", "/api/v1/network/autostart", json={"on": True}, expect=409)

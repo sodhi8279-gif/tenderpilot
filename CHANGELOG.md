@@ -3,6 +3,15 @@
 Each section is shown in the app (Settings & audit > Software update) when that version is offered as an update.
 Raise APP_VERSION in backend/app/version.py and add a section here for every release.
 
+## 1.4.1
+- **Restart TenderPilot now** (Settings & audit > Network access) works: TenderPilot starts again in its own window.
+  In 1.4.0 it stopped and showed "Windows cannot find '\\'"; start it from its icon if that happened.
+- New switch in Network access: **Start TenderPilot by itself when this Windows account signs in** (for servers).
+- Update check works on freshly installed Windows servers: TenderPilot now trusts its own up-to-date certificate list
+  as well as Windows' store. When a check fails, the message says why (no internet, firewall, certificate problem).
+- After an update, browsers always load the new screens (the page is no longer kept in the browser cache).
+- The harmless "fitz FutureWarning" line no longer appears in the TenderPilot window.
+
 ## 1.4.0
 - **Use TenderPilot from every computer in the office**: install it once on a server and turn on
   Settings & audit > Network access. Staff open the address shown there in their own browser. Connections are

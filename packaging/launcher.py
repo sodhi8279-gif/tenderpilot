@@ -92,6 +92,31 @@ def port_free(port: int, host: str = "127.0.0.1") -> bool:
             return False
 
 
+def wait_until_stopped(pid: int, seconds: float = 60) -> None:
+    """The TenderPilot that asked for the restart is still closing: wait for its process to end."""
+    end = time.time() + seconds
+    while time.time() < end and pid_alive(pid):
+        time.sleep(0.5)
+    time.sleep(1)  # let Windows release the port
+
+
+def pid_alive(pid: int) -> bool:
+    if os.name == "nt":
+        import ctypes
+        h = ctypes.windll.kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+        if not h:
+            return False
+        try:
+            return ctypes.windll.kernel32.WaitForSingleObject(h, 0) == 0x00000102  # WAIT_TIMEOUT: still running
+        finally:
+            ctypes.windll.kernel32.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def pick_port(demo: bool, wanted: int, network: bool) -> tuple[int, bool]:
     """Return (port, already_running). Reuses a TenderPilot of the same kind if one is running."""
     port = wanted
@@ -164,11 +189,14 @@ def backup() -> int:
 
 
 def main() -> int:
+    import warnings
+    warnings.filterwarnings("ignore", category=FutureWarning, module="fitz")  # harmless library notice; keeps the window clear
     ap = argparse.ArgumentParser(prog="TenderPilot")
     ap.add_argument("--demo", action="store_true", help="run the demo version with SYNTHETIC data")
     ap.add_argument("--backup", action="store_true", help="back up this computer's TenderPilot data and exit")
     ap.add_argument("--no-browser", action="store_true", help="do not open the browser")
     ap.add_argument("--local", action="store_true", help="this computer only, even if network access is turned on")
+    ap.add_argument("--after-restart", type=int, default=0, metavar="PID", help=argparse.SUPPRESS)
     args = ap.parse_args()
 
     home = configure_environment(args.demo)
@@ -185,6 +213,8 @@ def main() -> int:
 
     from app.services import netconfig  # reads data\server.json (environment is set up above)
 
+    if args.after_restart:  # started by Settings > Restart: wait until the old TenderPilot has stopped
+        wait_until_stopped(args.after_restart)
     cfg = netconfig.read_config()
     network = cfg["network"] and not args.demo and not args.local
     https = network and cfg["https"]
