@@ -56,6 +56,9 @@ Data, backups and updates
    Backups: Start menu > Back up TenderPilot data; copy the zip to another drive regularly.
    Updates: an administrator clicks Updates at the bottom of the left menu. TenderPilot backs up all data,
    installs the new version and restarts by itself; staff reload the page after about a minute.
+   No internet on the server, or rather not sign in to it? From your own computer, download TenderPilot-Setup.exe
+   from the release page, then in TenderPilot: Updates > "Install from a setup file on your computer" > choose
+   the file, type your password > Upload and check > Back up my data and install.
 
 Something wrong?
    Start menu > "TenderPilot (this computer only)" starts it for the server alone (no network), for example to

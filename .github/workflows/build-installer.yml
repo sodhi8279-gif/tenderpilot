@@ -55,6 +55,12 @@ jobs:
       - name: Build installers
         run: powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 
+      - name: Installer says what it is (checked by Software update > Upload a setup file)
+        shell: pwsh
+        working-directory: backend
+        run: |
+          python -c "import sys; from pathlib import Path; from app.services.updater import setup_info; from app.version import APP_VERSION; m, i = setup_info(Path('../installer/TenderPilot-Setup.exe')); print(i); assert m == b'MZ' and i.get('ProductName') == 'TenderPilot' and i.get('ProductVersion') == APP_VERSION and 'Setup' in i.get('FileDescription', ''), i"
+
       - name: Smoke test the packaged program
         shell: pwsh
         run: |

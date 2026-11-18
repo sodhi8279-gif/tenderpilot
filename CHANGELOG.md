@@ -3,6 +3,17 @@
 Each section is shown in the app (Settings & audit > Software update) when that version is offered as an update.
 Raise APP_VERSION in backend/app/version.py and add a section here for every release.
 
+## 1.6.0
+- **Install an update from your own computer.** Settings & audit > Software update > "Install from a setup file
+  on your computer": an administrator chooses TenderPilot-Setup.exe (or the release zip) downloaded to their own
+  computer, types their password, and uploads it. No need to sign in to the server.
+- Before anything is installed TenderPilot checks the file: it must be a TenderPilot installer, newer than the
+  installed version, and, when the server has internet, identical to the one published for that version (or to
+  the checksum in the zip). Anything else is refused and deleted. As with downloaded updates, a full backup is
+  written first; every upload is recorded in the audit log.
+- Installers now carry their name and version, which is what the check reads; upload works for installers from
+  1.6.0 on (for this one update, install 1.6.0 on the server, or use the Download update button).
+
 ## 1.5.0
 - **Client firms: upload documents and TenderPilot reads them for you.** On a firm's page, choose one or more
   documents (PDF, scan, photo, Word or Excel): GST and PAN, incorporation certificate, Udyam, EPF/ESI, contractor

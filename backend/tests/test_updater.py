@@ -212,3 +212,97 @@ def test_page_is_never_cached_so_updates_show_at_once(client):
         pytest.skip("frontend not built")
     r = client.get("/settings")
     assert "no-store" in r.headers.get("cache-control", "")
+
+
+# ------------------------------------------------------------------ setup file uploaded by an admin
+def _vs(key: str, val: str) -> bytes:
+    """A version-resource string entry as Windows stores it (UTF-16, value 32-bit aligned)."""
+    k = (key + "\0").encode("utf-16-le")
+    pad = b"\0" * ((4 - (6 + len(k)) % 4) % 4)
+    return b"\0" * 6 + k + pad + (val + "\0").encode("utf-16-le")
+
+
+def fake_setup(version="99.0.0", product="TenderPilot", desc="TenderPilot Setup") -> bytes:
+    body = b"MZ" + b"\0" * 64 + b"inno setup stub " * 2000
+    return body + _vs("CompanyName", "TenderPilot") + _vs("FileDescription", desc) + _vs("ProductName", product) + _vs("ProductVersion", version)
+
+
+def _upload_env(monkeypatch, published=None):
+    monkeypatch.setattr(updater, "UPDATES_DIR", Path(__import__("tempfile").mkdtemp()))
+    monkeypatch.setattr(updater, "can_install", lambda: (True, ""))
+    monkeypatch.setattr(updater, "_published_checksum", lambda v, n: published)
+    updater._state.update(phase="idle", latest=None, checked_at=None, error=None, file=None, backup=None)
+
+
+def _send(org, data: bytes, name="TenderPilot-Setup.exe", password="not-used-in-tests", **kw):
+    return org.req("POST", "/api/v1/update/upload", data={"password": password},
+                   files={"file": (name, data, "application/octet-stream")}, **kw)
+
+
+def test_version_info_is_read_from_the_setup_program():
+    info = updater.exe_version_info(fake_setup("1.6.0"))
+    assert info["ProductName"] == "TenderPilot" and info["ProductVersion"] == "1.6.0"
+
+
+def test_admin_uploads_a_setup_file_then_install_runs_it(org, monkeypatch):
+    data = fake_setup()
+    _upload_env(monkeypatch, published=hashlib.sha256(data).hexdigest())
+    out = _send(org, data).json()
+    assert out["phase"] == "ready" and out["latest"]["version"] == "99.0.0" and out["latest"]["source"] == "upload"
+    assert out["latest"]["verified_published"] and "published" in out["latest"]["check"]
+    assert Path(out["file"]).read_bytes() == data and not list(updater.UPDATES_DIR.glob("*.part"))
+    updater.check()  # a background check must not swap in another version behind the uploaded file
+    assert updater._state["latest"]["source"] == "upload"
+    launched = []
+    res = updater.install(launch=lambda args, **kw: launched.append(args), exit_after=lambda: None)
+    assert launched[0][0] == out["file"] and "before-update-99.0.0" in res["backup"]
+
+
+def test_upload_from_the_release_zip_checks_the_checksum_inside(org, monkeypatch):
+    data = fake_setup()
+    _upload_env(monkeypatch)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("TenderPilot-Setup.exe", data)
+        z.writestr("TenderPilot-Setup.exe.sha256", hashlib.sha256(data).hexdigest() + "  TenderPilot-Setup.exe\n")
+        z.writestr("INSTALL-ON-SERVER.txt", "guide")
+    out = _send(org, buf.getvalue(), name="TenderPilot-99.0.0-Windows-Setup.zip").json()
+    assert out["phase"] == "ready" and "zip" in out["latest"]["check"]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("TenderPilot-Setup.exe", data + b"x")
+        z.writestr("TenderPilot-Setup.exe.sha256", hashlib.sha256(data).hexdigest())
+    _upload_env(monkeypatch)
+    assert "damaged" in _send(org, buf.getvalue(), name="t.zip", expect=409).json()["detail"]
+
+
+@pytest.mark.parametrize("data,expected", [
+    (b"%PDF-1.7 not a program", "not a Windows setup program"),
+    (fake_setup(product="Some Other App"), "not the TenderPilot installer"),
+    (fake_setup(version=APP_VERSION), "already installed"),
+    (fake_setup(version="0.9.0"), "already installed"),
+])
+def test_wrong_files_are_refused_and_deleted(org, monkeypatch, data, expected):
+    _upload_env(monkeypatch)
+    r = _send(org, data, expect=409).json()
+    assert expected in r["detail"]
+    assert not list(updater.UPDATES_DIR.iterdir()) and updater._state["phase"] == "idle"
+
+
+def test_file_that_differs_from_the_published_one_is_refused(org, monkeypatch):
+    _upload_env(monkeypatch, published="0" * 64)
+    assert "not the one published" in _send(org, fake_setup(), expect=409).json()["detail"]
+    assert not list(updater.UPDATES_DIR.iterdir())
+
+
+def test_offline_server_accepts_with_a_warning(org, monkeypatch):
+    _upload_env(monkeypatch, published=None)
+    out = _send(org, fake_setup()).json()
+    assert not out["latest"]["verified_published"] and "no internet" in out["latest"]["check"]
+
+
+def test_only_an_admin_with_the_right_password_can_upload(org, monkeypatch):
+    _upload_env(monkeypatch)
+    assert "password" in _send(org, fake_setup(), password="wrong", expect=403).json()["detail"]
+    _send(org, fake_setup(), role="tender_manager", expect=403)
+    assert updater._state["phase"] == "idle" and not list(updater.UPDATES_DIR.iterdir())
