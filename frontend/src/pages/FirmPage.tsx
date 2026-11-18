@@ -5,6 +5,7 @@ import { useMe } from "../App";
 import { t } from "../i18n";
 import { Button, Empty, ErrorBox, fmtDay, Loading, Panel, Status, Tabs, useLoad } from "../ui";
 import { constitution, Firm, FirmFacts, FirmForm, FirmSchema } from "./Firms";
+import ReadDocuments from "./ReadDocuments";
 import { Evidence } from "./Vault";
 
 /** One client firm: profile, credentials grouped by kind, and the tenders it is part of. */
@@ -13,8 +14,10 @@ export default function FirmPage() {
   const { can } = useMe();
   const firm = useLoad<Firm>(() => api(`/entities/${id}?reveal=true`), [id]);
   const schema = useLoad<FirmSchema>(() => api("/firms/schema"));
+  const cats = useLoad<string[]>(() => api("/evidence/categories"));
   const [tab, setTab] = useState("profile");
   const [editing, setEditing] = useState(false);
+  const [saved, setSaved] = useState(0); // records added by the reader: refresh the open tab's list
   if (!firm.data || !schema.data) return firm.error ? <ErrorBox error={firm.error} onRetry={firm.reload} /> : <Loading />;
   const f = firm.data, s = f.summary, g = schema.data.groups;
   const tabs: [string, string][] = [["profile", "Profile"], ...Object.entries(g).map(([k, v]) => [k, `${v.label} (${s.counts[k] || 0})`] as [string, string]),
@@ -25,6 +28,7 @@ export default function FirmPage() {
     </div>
   );
   const pr = f.profile || {};
+  const reader = can("vault.write") && cats.data && <ReadDocuments entityId={f.id} firmName={f.legal_name} cats={cats.data} onChange={() => { firm.reload(); setSaved((n) => n + 1); }} />;
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       <div className="text-sm"><Link className="text-muted underline" to="/vault">{t("Client firms")}</Link> /</div>
@@ -35,6 +39,7 @@ export default function FirmPage() {
         </div>
       </div>
       <Panel title="At a glance"><FirmFacts s={s} /></Panel>
+      {!editing && reader}
       <Tabs tabs={tabs} value={tab} onChange={setTab} />
       {tab === "profile" ? (
         editing ? (
@@ -85,7 +90,7 @@ export default function FirmPage() {
                 <tbody>{s.turnover_by_fy.map((x) => <tr key={x.fy}><td>{x.fy}</td><td>{inr(x.amount, 0)}</td></tr>)}</tbody></table>
             </Panel>
           )}
-          <Evidence key={tab} entityId={f.id} categories={g[tab].categories} onChange={firm.reload} />
+          <Evidence key={`${tab}-${saved}`} entityId={f.id} categories={g[tab].categories} onChange={firm.reload} />
         </>
       )}
     </div>
