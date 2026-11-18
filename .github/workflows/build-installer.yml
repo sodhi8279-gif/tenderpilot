@@ -119,6 +119,14 @@ jobs:
             email = "admin@test.local"; password = "update-test-12345" } | ConvertTo-Json)).token
           if (-not $tok) { throw "Staff sign-in over the network failed" }
           Write-Host "Staff sign-in over the network: OK"
+          # Settings > Network access > Restart TenderPilot now: the old copy stops and a new one comes back by itself
+          $h = @{ Authorization = "Bearer $tok" }
+          Invoke-RestMethod -Method Post "https://${ip}:8471/api/v1/network/restart" -Headers $h -SkipCertificateCheck | Out-Null
+          if (-not $p.WaitForExit(30000)) { throw "The old TenderPilot did not stop for the restart" }
+          $back = $null
+          foreach ($i in 1..60) { try { $back = Invoke-RestMethod "https://${ip}:8471/api/health" -SkipCertificateCheck -TimeoutSec 3; break } catch { Start-Sleep 2 } }
+          if (-not $back) { throw "TenderPilot did not come back after Restart" }
+          Write-Host "Restart from Settings: TenderPilot came back by itself"
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
           Get-Process TenderPilot -ErrorAction SilentlyContinue | Stop-Process -Force
           Remove-Item $cfg
