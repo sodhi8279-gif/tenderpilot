@@ -145,7 +145,8 @@ def status() -> dict:
 def check(force: bool = True) -> dict:
     with _lock:
         recent = _state["checked_at"] and time.time() - _state["checked_at"] < CHECK_EVERY_S
-        skip = _state["phase"] in ("downloading", "installing") or (recent and not force)
+        uploaded = _state["phase"] == "ready" and (_state["latest"] or {}).get("source") == "upload"
+        skip = _state["phase"] in ("downloading", "installing") or uploaded or (recent and not force)
     if skip:
         return status()  # (outside the lock: status() takes it itself)
     try:
@@ -254,6 +255,102 @@ def install(launch=subprocess.Popen, exit_after=_exit_soon) -> dict:
     exit_after()
     return {**status(), "backup": str(backup), "message": "Installing. TenderPilot will close and start again by itself "
                                                           "in about a minute."}
+
+
+# ------------------------------------------------------------------ setup file uploaded by an admin
+def exe_version_info(head: bytes) -> dict[str, str]:
+    """String values of a Windows program's version resource (ProductName, ProductVersion, CompanyName ...)."""
+    out: dict[str, str] = {}
+    for key in ("ProductName", "ProductVersion", "CompanyName", "FileDescription"):
+        needle = (key + "\0").encode("utf-16-le")
+        i = head.rfind(needle)
+        if i < 0:
+            continue
+        j = i + len(needle)
+        for _ in range(2):  # zero padding to 32-bit alignment after the key (counted from the entry, not the file)
+            if head[j:j + 2] == b"\0\0":
+                j += 2
+        end = j
+        while end + 1 < len(head) and head[end:end + 2] != b"\0\0":
+            end += 2
+        val = head[j:end].decode("utf-16-le", "ignore").strip()
+        if val:
+            out[key] = val
+    return out
+
+
+def setup_info(path: Path) -> tuple[bytes, dict[str, str]]:
+    """(first two bytes, version strings) of a setup program; the resource is near the start of an Inno stub."""
+    size = path.stat().st_size
+    with path.open("rb") as f:
+        head = f.read(4 * 1024 * 1024)
+        f.seek(max(0, size - 4 * 1024 * 1024))
+        tail = f.read()
+    return head[:2], exe_version_info(head) or exe_version_info(tail)
+
+
+def _published_checksum(version: str, name: str) -> str | None:
+    """The checksum GitHub publishes for this version, or None when it cannot be reached (offline server)."""
+    try:
+        with _get(FEED.rsplit("/releases/", 1)[0] + f"/releases/tags/v{version}", timeout=10) as r:
+            rel = json.loads(r.read().decode("utf-8"))
+        url = {a.get("name"): a.get("browser_download_url") for a in rel.get("assets", [])}.get(f"{name}.sha256")
+        if not url:
+            return None
+        with _get(url, timeout=10) as r:
+            got = r.read().decode("ascii", "ignore").split()[0].strip().lower()
+        return got if re.fullmatch(r"[0-9a-f]{64}", got) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def accept_uploaded(part: Path, original_name: str, zip_checksum: str | None = None) -> dict:
+    """Check a setup file an admin uploaded and make it the one "Install now" runs. Deletes it if it fails."""
+    try:
+        size = part.stat().st_size
+        magic, info = setup_info(part)
+        if magic != b"MZ":
+            raise UpdateError("This is not a Windows setup program. Choose TenderPilot-Setup.exe (or the "
+                              "TenderPilot-...-Windows-Setup.zip from the release page).")
+        want = "TenderPilot Demo" if demo_build() else "TenderPilot"
+        product = info.get("ProductName", "")
+        if product != want or "Setup" not in info.get("FileDescription", "Setup"):
+            raise UpdateError(f"This file is not the {want} installer"
+                              f"{f' (it is {product!r})' if product else ''}. Choose {installer_name()}.")
+        version = info.get("ProductVersion", "")
+        if not re.fullmatch(r"\d+(?:\.\d+){1,3}", version):
+            raise UpdateError("This installer does not say which version it is. Use an installer from TenderPilot "
+                              "1.6.0 or later, from the release page.")
+        if not is_newer(version):
+            raise UpdateError(f"This installer is version {version}; version {APP_VERSION} is already installed. "
+                              "Choose a newer one.")
+        digest = _sha256(part)
+        if zip_checksum and zip_checksum != digest:
+            raise UpdateError("The installer in the zip does not match the checksum next to it. The file is damaged; "
+                              "download it again.")
+        published = _published_checksum(version, installer_name())
+        if published and published != digest:
+            raise UpdateError(f"This installer is not the one published for version {version}: its checksum differs. "
+                              "It may have been changed. Download it again from the release page.")
+        check_note = ("Matches the checksum published for this version." if published else
+                      "Matches the checksum in the zip." if zip_checksum else
+                      "Could not compare with the published checksum (no internet on the server). Install only a file "
+                      "you downloaded from the TenderPilot release page.")
+        UPDATES_DIR.mkdir(parents=True, exist_ok=True)
+        target = UPDATES_DIR / f"TenderPilot-{version}-{installer_name()}"
+        part.replace(target)
+    except Exception:
+        part.unlink(missing_ok=True)
+        raise
+    with _lock:
+        if _state["phase"] in ("downloading", "installing"):
+            target.unlink(missing_ok=True)
+            raise UpdateError("Another update is in progress. Wait for it to finish.")
+        _state.update(phase="ready", file=str(target), error=None, downloaded=size, total=size,
+                      latest={**(_state["latest"] or {}), "version": version, "name": f"TenderPilot {version}",
+                              "source": "upload", "uploaded_name": original_name, "check": check_note,
+                              "verified_published": bool(published), "sha256": digest})
+    return status()
 
 
 def cleanup_old_installers() -> None:
