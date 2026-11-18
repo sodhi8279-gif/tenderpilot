@@ -4,7 +4,7 @@
 ; Installs per user (no administrator rights needed). User data lives in %LOCALAPPDATA%\TenderPilot[-Demo]
 ; and is never removed by uninstall.
 
-#define AppVersion "1.4.0"
+#define AppVersion "1.4.1"
 #ifdef DEMO
   #define AppName "TenderPilot Demo"
   #define AppIdGuid "{{6C1B7E0A-3F7D-4C38-9B67-2D0E5A9F4D21}"

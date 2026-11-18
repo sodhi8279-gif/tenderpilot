@@ -32,7 +32,46 @@ def network_status(ctx: Ctx = Depends(get_ctx)):
     return {"config": cfg, "active": act, "restart_needed": not demo and wanted != running,
             "addresses": netconfig.addresses(), "urls": netconfig.urls(cfg["port"], cfg["https"]),
             "firewall_command": netconfig.firewall_command(cfg["port"]), "certificate": netconfig.cert_info(),
-            "can_restart": _can_restart(), "demo": demo}
+            "can_restart": _can_restart(), "demo": demo, "autostart": autostart_state()}
+
+
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def autostart_state() -> bool | None:
+    """Start with Windows (same entry the installer's "Start TenderPilot when I sign in" writes). None: not offered here."""
+    if not _can_restart() or os.environ.get("DEMO_MODE") == "1":
+        return None
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            winreg.QueryValueEx(k, "TenderPilot")
+            return True
+    except OSError:
+        return False
+
+
+class AutostartIn(BaseModel):
+    on: bool
+
+
+@router.put("/autostart")
+def set_autostart(body: AutostartIn, ctx: Ctx = Depends(get_ctx)):
+    ctx.require("org.admin")
+    if autostart_state() is None:
+        raise HTTPException(409, "Starting with Windows can be set in the installed Windows program only.")
+    import winreg
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+        if body.on:
+            winreg.SetValueEx(k, "TenderPilot", 0, winreg.REG_SZ, f'"{sys.executable}" --no-browser')
+        else:
+            try:
+                winreg.DeleteValue(k, "TenderPilot")
+            except OSError:
+                pass
+    audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="network.autostart", subject_type="software", on=body.on)
+    ctx.db.commit()
+    return {"autostart": autostart_state()}
 
 
 class NetworkIn(BaseModel):
@@ -73,6 +112,10 @@ def download_certificate(ctx: Ctx = Depends(get_ctx)):
                     headers={"Content-Disposition": 'attachment; filename="TenderPilot-server.crt"'})
 
 
+def restart_command() -> list[str]:
+    return [sys.executable, "--no-browser", "--after-restart", str(os.getpid())]
+
+
 @router.post("/restart")
 def restart(ctx: Ctx = Depends(get_ctx)):
     """Installed Windows program only: start TenderPilot again so new network settings apply."""
@@ -81,10 +124,9 @@ def restart(ctx: Ctx = Depends(get_ctx)):
         raise HTTPException(409, "Restart TenderPilot yourself: close its window and start it again.")
     audit(ctx.db, org_id=ctx.org_id, user_id=ctx.user.id, action="network.restart", subject_type="software")
     ctx.db.commit()
-    exe = sys.executable
-    # A helper waits until this TenderPilot has stopped (port free), then starts it again without opening a browser.
-    cmd = f'ping -n 6 127.0.0.1 >nul & start "" "{exe}" --no-browser'
-    subprocess.Popen(["cmd", "/c", cmd], creationflags=0x00000008 | 0x00000200, close_fds=True)
+    # The new TenderPilot gets its own window and waits until this one has stopped. No command shell: an
+    # argument list cannot be broken by quoting (1.4.0 showed "Windows cannot find '\\'" here).
+    subprocess.Popen(restart_command(), creationflags=0x00000010 | 0x00000200, close_fds=True)  # NEW_CONSOLE | NEW_GROUP
 
     def bye():
         time.sleep(1.5)

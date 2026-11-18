@@ -184,3 +184,31 @@ def test_quiet_check_after_a_recent_check_returns_at_once(monkeypatch):
     t.start()
     t.join(3)
     assert not t.is_alive() and out["s"]["update_available"] is True
+
+
+def test_update_check_trusts_the_shipped_certificate_list():
+    import certifi
+    import ssl as _ssl
+    ctx = updater.ssl_context()
+    assert ctx.verify_mode == _ssl.CERT_REQUIRED and ctx.check_hostname
+    assert ctx.cert_store_stats()["x509_ca"] >= 100  # certifi's roots are loaded
+    assert certifi.where()
+
+
+def test_network_errors_are_explained():
+    import socket as _socket
+    import ssl as _ssl
+    import urllib.error
+    cert = urllib.error.URLError(_ssl.SSLCertVerificationError(1, "[SSL: CERTIFICATE_VERIFY_FAILED] unable to get local issuer"))
+    assert "certificate problem" in updater.explain(cert)
+    assert "no internet" in updater.explain(urllib.error.URLError(_socket.gaierror(11001, "getaddrinfo failed")))
+    assert "did not answer in time" in updater.explain(urllib.error.URLError(TimeoutError("timed out")))
+    assert "refused" in updater.explain(urllib.error.URLError(ConnectionRefusedError(10061, "refused")))
+
+
+def test_page_is_never_cached_so_updates_show_at_once(client):
+    from app import main
+    if not main.DIST.exists():
+        pytest.skip("frontend not built")
+    r = client.get("/settings")
+    assert "no-store" in r.headers.get("cache-control", "")

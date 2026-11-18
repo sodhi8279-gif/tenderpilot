@@ -5,7 +5,7 @@ import { Button, ErrorBox, inputCls, Loading, Notice, Panel, useAction, useLoad 
 type Net = {
   config: { network: boolean; port: number; https: boolean }; active: { network: boolean; port: number; https: boolean };
   restart_needed: boolean; addresses: { names: string[]; ips: string[] }; urls: string[]; firewall_command: string;
-  certificate: { names: string[]; valid_until: string; fingerprint_sha256: string } | null; can_restart: boolean; demo: boolean;
+  certificate: { names: string[]; valid_until: string; fingerprint_sha256: string } | null; can_restart: boolean; demo: boolean; autostart: boolean | null;
 };
 
 /** Settings > Network access (administrators): let staff use TenderPilot from their own computers. */
@@ -51,6 +51,15 @@ export default function NetworkAccess() {
         )}
         {restarting && <Notice>{restarting}</Notice>}
 
+        {d.autostart !== null && (
+          <label className="flex items-start gap-2 rounded-md border border-line p-3">
+            <input type="checkbox" className="mt-1" checked={d.autostart} disabled={act.busy}
+              onChange={(e) => { const on = e.target.checked; act.run(async () => { await api("/network/autostart", { method: "PUT", json: { on } }); n.reload(); }); }} />
+            <span><span className="font-medium">Start TenderPilot by itself when this Windows account signs in</span><br />
+              <span className="text-xs text-muted">Recommended on a server. After the server restarts, sign in to it once (for example with Remote Desktop) and TenderPilot starts without a browser.</span></span>
+          </label>
+        )}
+
         {d.config.network && (
           <div className="space-y-3">
             <div>
@@ -85,7 +94,7 @@ export default function NetworkAccess() {
               </div>
             )}
             <Notice>Keep TenderPilot running on the server: leave its window open and disconnect from Remote Desktop instead of signing out.
-              The installer option "Start TenderPilot when I sign in to Windows" starts it again after a server restart.</Notice>
+              Tick "Start TenderPilot by itself" above so it comes back after a server restart.</Notice>
           </div>
         )}
       </div>

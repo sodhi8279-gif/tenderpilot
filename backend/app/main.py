@@ -107,4 +107,6 @@ if DIST.exists():
         f = (DIST / path).resolve()
         if path and f.is_file() and DIST.resolve() in f.parents:
             return FileResponse(f)
-        return FileResponse(DIST / "index.html")
+        # The page itself is never cached, so after an update every browser loads the new screens at once.
+        # (Its scripts and styles under /assets have new file names in every version, so they can be cached.)
+        return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
